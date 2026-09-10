@@ -20,10 +20,11 @@ def test_get_benchmark_prompts():
     response = client.get("/api/benchmark_prompts")
     assert response.status_code == 200
     prompts = response.json()
-    assert len(prompts) == 4
+    assert len(prompts) == 5
     domains = [p["domain"] for p in prompts]
     assert "DFT" in domains
     assert "Molecular Dynamics" in domains
+    assert "Interfacial Script Evaluation" in domains
 
 def test_chat_endpoint_success(mocker):
     mock_chat_res = {
@@ -45,6 +46,27 @@ def test_chat_endpoint_success(mocker):
 
 def test_chat_endpoint_empty_message():
     response = client.post("/api/chat", json={"message": "   "})
+    assert response.status_code == 400
+    assert "Message cannot be empty" in response.json()["detail"]
+
+def test_chat_stream_endpoint_success(mocker):
+    from backend.agents.baseline_agent import SingleShotAgent
+    def fake_stream(*args, **kwargs):
+        yield 'data: {"type": "session", "session_id": 10}\n\n'
+        yield 'data: {"type": "content", "delta": "Hello"}\n\n'
+        yield 'data: {"type": "done", "latency_seconds": 0.5}\n\n'
+
+    mocker.patch.object(SingleShotAgent, "chat_stream", side_effect=fake_stream)
+
+    response = client.post("/api/chat/stream", json={"message": "Hello stream"})
+    assert response.status_code == 200
+    assert "text/event-stream" in response.headers["content-type"]
+    body = response.text
+    assert "Hello" in body
+    assert "session" in body
+
+def test_chat_stream_endpoint_empty_message():
+    response = client.post("/api/chat/stream", json={"message": ""})
     assert response.status_code == 400
     assert "Message cannot be empty" in response.json()["detail"]
 
@@ -82,7 +104,70 @@ def test_sessions_crud(mocker):
     assert del_res.status_code == 200
     assert del_res.json()["status"] == "deleted"
 
-@pytest.mark.asyncio
-async def test_startup_event():
+def test_evaluate_zero_shot_success(mocker):
+    mock_chat_res = {
+        "status": "success",
+        "response": "```python\nimport numpy as np\nimport ase\n# m_sur cus\n```",
+        "model": "batiai/gemma4-e2b:q4",
+        "latency_seconds": 1.2,
+        "session_id": 50
+    }
+    mocker.patch("backend.main.SingleShotAgent.chat", return_value=mock_chat_res)
+    mocker.patch("backend.main.insert_evaluation", return_value=1)
+
+    response = client.post("/api/evaluate_zero_shot", json={"session_id": 50})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["evaluation_id"] == 1
+    assert "score" in data
+    assert "grade" in data
+    assert "category_scores" in data
+
+def test_evaluate_zero_shot_failure(mocker):
+    mock_chat_res = {
+        "status": "error",
+        "error": "Ollama timeout",
+        "model": "batiai/gemma4-e2b:q4"
+    }
+    mocker.patch("backend.main.SingleShotAgent.chat", return_value=mock_chat_res)
+
+    response = client.post("/api/evaluate_zero_shot", json={})
+    assert response.status_code == 500
+    assert "Ollama timeout" in response.json()["detail"]
+
+def test_list_evaluations(mocker):
+    mocker.patch("backend.main.get_evaluations", return_value=[{"id": 1, "score": 85.0}])
+    response = client.get("/api/evaluations")
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+    assert response.json()[0]["score"] == 85.0
+
+def test_read_root_fallback(mocker):
+    mocker.patch("backend.main.FRONTEND_DIR", mocker.MagicMock(exists=lambda: False, __truediv__=lambda self, x: mocker.MagicMock(exists=lambda: False)))
+    response = client.get("/")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+
+def test_startup_event():
+    import asyncio
     from backend.main import startup_event
-    await startup_event()
+    asyncio.run(startup_event())
+
+def test_evaluate_zero_shot_stream_success(mocker):
+    mock_events = [
+        'data: {"type": "session", "session_id": 99}\n\n',
+        'data: {"type": "thinking", "delta": "reasoning"}\n\n',
+        'data: {"type": "content", "delta": "```python\\nimport numpy as np\\nimport ase\\n```"}\n\n',
+        'data: {"type": "done", "latency_seconds": 1.5, "session_id": 99, "full_response": "```python\\nimport numpy as np\\nimport ase\\n```"}\n\n'
+    ]
+    mocker.patch("backend.main.SingleShotAgent.chat_stream", return_value=iter(mock_events))
+    mocker.patch("backend.main.insert_evaluation", return_value=12)
+
+    response = client.post("/api/evaluate_zero_shot/stream", json={"session_id": 99})
+    assert response.status_code == 200
+    assert "text/event-stream" in response.headers["content-type"]
+    text = response.text
+    assert "eval_complete" in text
+    assert '"score"' in text
+    assert '"evaluation_id": 12' in text

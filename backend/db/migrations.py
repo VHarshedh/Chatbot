@@ -68,6 +68,24 @@ def init_db():
         FOREIGN KEY (job_id) REFERENCES jobs (id)
     )
     """)
+
+    # Evaluations table (tracks model zero-shot benchmark scores and reports)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS evaluations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id INTEGER,
+        model_name TEXT,
+        prompt TEXT,
+        generated_code TEXT,
+        score REAL,
+        grade TEXT,
+        category_scores_json TEXT,
+        evaluation_report_json TEXT,
+        latency_seconds REAL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (session_id) REFERENCES sessions (id)
+    )
+    """)
     
     conn.commit()
     conn.close()

@@ -3,11 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Scientific Computing AI — Single-Shot Evaluation</title>
+  <title>Scientific Computing AI — Gemma4 Zero-Shot Evaluation</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css">
+  <!-- KaTeX for Scientific Math Formula Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous">
 </head>
 <body>
   <div class="app-layout">
@@ -33,9 +35,19 @@
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
           Benchmark Prompts
         </h3>
-        <p class="section-desc">One-click tests for raw model accuracy:</p>
         <div class="benchmark-list" id="benchmark-list">
           <!-- Dynamically populated from /api/benchmark_prompts -->
+        </div>
+      </div>
+
+      <!-- Past Evaluation Benchmarks -->
+      <div class="sidebar-section">
+        <h3 class="section-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20V10M18 20V4M6 20v-4"/></svg>
+          Accuracy Benchmarks
+        </h3>
+        <div class="eval-history-list" id="eval-history-list">
+          <!-- Dynamically populated from /api/evaluations -->
         </div>
       </div>
 
@@ -55,8 +67,8 @@
         <div class="mode-badge">
           <span class="status-dot active"></span>
           <div class="mode-info">
-            <span class="mode-label">Single-Shot Baseline</span>
-            <span class="mode-desc">Zero Tools • Zero RAG</span>
+            <span class="mode-label">Zero-Shot Baseline</span>
+            <span class="mode-desc">No Tools • No RAG</span>
           </div>
         </div>
       </div>
@@ -71,28 +83,41 @@
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
           </button>
           <div class="model-badge">
-            <span class="badge-label">Active Model:</span>
+            <span class="badge-label">Model:</span>
             <span class="badge-val" id="model-name-display">batiai/gemma4-e2b:q4</span>
           </div>
         </div>
         <div class="header-right">
           <div class="pill-badge pill-neutral">
             <span class="pulse-indicator"></span>
-            Ollama Local Engine
+            Ollama Zero-Shot Engine
           </div>
         </div>
       </header>
 
       <!-- Message Container -->
       <div class="messages-container" id="messages-container">
-        <!-- Welcome / Empty State Card -->
+        <!-- Welcome / Evaluation Hero Card -->
         <div class="welcome-hero" id="welcome-hero">
           <div class="hero-icon">🧪</div>
-          <h1>Gemma4 Single-Shot Evaluation</h1>
+          <h1>Gemma4 Zero-Shot Evaluation</h1>
           <p class="hero-description">
-            This interface tests <strong>batiai/gemma4-e2b:q4</strong> in a pure single-shot environment.
-            External tools, web browsing, and RAG databases are completely disabled to measure the model's raw pre-trained comprehension of scientific workflows.
+            Benchmark <strong>batiai/gemma4-e2b:q4</strong> in a pure zero-shot setting. Tools and RAG databases are completely isolated to measure the model's raw pre-trained comprehension of computational chemistry workflows.
           </p>
+
+          <!-- Flagship Benchmark Action Banner -->
+          <div class="evaluation-banner">
+            <div class="eval-banner-content">
+              <div class="eval-pill">🎯 Flagship Accuracy Benchmark</div>
+              <h3>Interfacial Water Analysis Script Generator</h3>
+              <p>Prompts Gemma4 to write the complete Python script (density profiles, RDFs, surface hydroxyl fractions, survival probabilities $P(t)$, DP model averaging, 2×2 plots, and text report) and automatically measures its accuracy against the 100-point ground truth standard.</p>
+            </div>
+            <button id="run-flagship-eval-btn" class="btn btn-eval">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+              Run Script Evaluation
+            </button>
+          </div>
+
           <div class="domain-grid">
             <div class="domain-card" data-prompt-id="dft_cutoff">
               <span class="domain-badge dft">DFT</span>
@@ -117,7 +142,7 @@
           </div>
         </div>
 
-        <!-- Chat messages will render here -->
+        <!-- Chat messages & Evaluation reports will render here -->
         <div class="chat-thread" id="chat-thread"></div>
       </div>
 
@@ -129,7 +154,7 @@
               id="prompt-input"
               class="prompt-input"
               rows="1"
-              placeholder="Ask Gemma4 a scientific computing question (e.g., Quantum ESPRESSO, LAMMPS, DeePMD)..."
+              placeholder="Ask Gemma4 a scientific computing question or request a simulation script..."
               required
             ></textarea>
             <div class="input-actions">
@@ -144,6 +169,8 @@
     </main>
   </div>
 
+  <!-- KaTeX for Scientific Math Formula Rendering -->
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

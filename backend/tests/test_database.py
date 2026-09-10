@@ -1,6 +1,6 @@
 import pytest
 import sqlite3
-from backend.db.models import execute_query, insert_session, insert_message
+from backend.db.models import execute_query, insert_session, insert_message, insert_evaluation, get_evaluations
 
 @pytest.fixture
 def memory_db(tmp_path):
@@ -28,6 +28,20 @@ def memory_db(tmp_path):
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (session_id) REFERENCES sessions (id)
     )""")
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS evaluations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id INTEGER,
+        model_name TEXT,
+        prompt TEXT,
+        generated_code TEXT,
+        score REAL,
+        grade TEXT,
+        category_scores_json TEXT,
+        evaluation_report_json TEXT,
+        latency_seconds REAL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )""")
     conn.commit()
     conn.close()
     yield
@@ -50,3 +64,23 @@ def test_insert_message(memory_db):
     assert res[0]["role"] == "user"
     assert res[0]["content"] == "Hello DB"
     assert res[0]["agent_used"] == "QAAgent"
+
+def test_insert_and_get_evaluations(memory_db):
+    eval_id = insert_evaluation(
+        session_id=1,
+        model_name="batiai/gemma4-e2b:q4",
+        prompt="Test prompt",
+        generated_code="import numpy as np",
+        score=95.0,
+        grade="A",
+        category_scores_json='{"syntax": 15}',
+        evaluation_report_json='{"passed": []}',
+        latency_seconds=1.5
+    )
+    assert eval_id > 0
+
+    evals = get_evaluations(limit=10)
+    assert len(evals) == 1
+    assert evals[0]["id"] == eval_id
+    assert evals[0]["score"] == 95.0
+    assert evals[0]["grade"] == "A"

@@ -17,6 +17,7 @@ ENV/
 # Testing & Coverage
 .pytest_cache/
 .coverage
+.coveragerc
 htmlcov/
 .tox/
 

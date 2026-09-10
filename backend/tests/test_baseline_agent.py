@@ -96,3 +96,74 @@ def test_chat_failed_generation(mocker):
 
     assert res["status"] == "error"
     assert mock_insert_message.call_count == 1  # Only user message logged
+
+def test_generate_response_streaming_chunks(mocker):
+    mock_resp = mocker.MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.iter_lines.return_value = [
+        b'{"message": {"thinking": "analyzing request"}, "done": false}',
+        b'',  # empty line
+        b'invalid json',
+        b'{"message": {"content": "Here is the code."}, "eval_count": 25, "total_duration": 500000, "done": true}'
+    ]
+    mocker.patch("requests.post", return_value=mock_resp)
+
+    agent = SingleShotAgent(model="batiai/gemma4-e2b:q4")
+    res = agent.generate_response("Write code")
+    assert res["status"] == "success"
+    assert "Thinking Process" in res["response"]
+    assert "Here is the code." in res["response"]
+    assert res["eval_count"] == 25
+
+def test_generate_response_only_thinking_or_empty(mocker):
+    mock_resp = mocker.MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.iter_lines.return_value = [
+        b'{"message": {"thinking": "Just thinking"}, "done": true}'
+    ]
+    mocker.patch("requests.post", return_value=mock_resp)
+
+    agent = SingleShotAgent(model="batiai/gemma4-e2b:q4")
+    res = agent.generate_response("Deep question")
+    assert res["status"] == "success"
+    assert "Just thinking" in res["response"]
+
+    # Empty response
+    mock_resp.iter_lines.return_value = []
+    mock_resp.json.return_value = {}
+    res_empty = agent.generate_response("Nothing")
+    assert res_empty["status"] == "success"
+    assert "No response generated" in res_empty["response"]
+
+def test_chat_stream_success(mocker):
+    mocker.patch("backend.agents.baseline_agent.insert_session", return_value=501)
+    mock_insert_msg = mocker.patch("backend.agents.baseline_agent.insert_message")
+
+    mock_resp = mocker.MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.iter_lines.return_value = [
+        b'{"message": {"thinking": "analyzing"}, "done": false}',
+        b'{"message": {"content": "Answer here"}, "eval_count": 12, "total_duration": 200, "done": true}'
+    ]
+    mocker.patch("requests.post", return_value=mock_resp)
+
+    agent = SingleShotAgent(model="batiai/gemma4-e2b:q4")
+    chunks = list(agent.chat_stream("Hello live stream"))
+    assert len(chunks) >= 3
+    joined = "".join(chunks)
+    assert "session" in joined
+    assert "thinking" in joined
+    assert "content" in joined
+    assert "done" in joined
+    assert mock_insert_msg.call_count == 2
+
+def test_chat_stream_connection_error(mocker):
+    mocker.patch("backend.agents.baseline_agent.insert_session", return_value=502)
+    mocker.patch("backend.agents.baseline_agent.insert_message")
+    mocker.patch("requests.post", side_effect=requests.exceptions.ConnectionError("Down"))
+
+    agent = SingleShotAgent()
+    chunks = list(agent.chat_stream("Hello fail"))
+    joined = "".join(chunks)
+    assert "error" in joined
+    assert "Could not connect to Ollama" in joined

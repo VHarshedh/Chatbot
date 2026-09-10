@@ -1,13 +1,16 @@
 import os
+import json
 from pathlib import Path
 from typing import Optional, List
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from backend.config import settings
 from backend.agents.baseline_agent import SingleShotAgent
-from backend.db.models import execute_query, insert_session
+from backend.evaluation.script_evaluator import ScriptEvaluator
+from backend.db.models import execute_query, insert_session, insert_evaluation, get_evaluations
+from backend.db.migrations import init_db
 
 app = FastAPI(title="Scientific Computing Chatbox API", version="1.0.0")
 
@@ -15,6 +18,20 @@ app = FastAPI(title="Scientific Computing Chatbox API", version="1.0.0")
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 FRONTEND_DIR.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
+
+INTERFACIAL_ANALYSIS_BENCHMARK_PROMPT = (
+    "Write a complete, self-contained scientific Python script using ASE, NumPy, and Matplotlib to analyze "
+    "an interfacial metal-oxide/water system (template: IrO2/H2O) from DeepMD .extxyz trajectories across multiple DP models. "
+    "Your script must:\n"
+    "1. Classify surface metal atoms (M_sur from topmost z-layer), bulk vs water oxygens (O_bulk vs O_w via stoichiometry), "
+    "coordinatively unsaturated metal sites (CUS), and adsorbed vs bridge oxygens (O_adb, O_br).\n"
+    "2. Compute water mass density profiles along the z-axis (g/cm^3) and pair radial distribution functions (RDFs: M_cus-O_w, O_br-H_w, O_br-O_w).\n"
+    "3. Track surface hydroxylation / dissociation fractions (OH vs intact H2O) using neighbor distance cutoffs (~1.2 A), and compute the water survival probability P(t) over log-spaced time lags tau via continuous set intersections.\n"
+    "4. Loop over multiple DP models, computing the cross-model mean and standard deviation (mean +/- std).\n"
+    "5. Save individual plots for density, RDF, survival, and fraction, as well as a combined 2x2 multi-panel summary presentation figure (full_analysis_presentation.png).\n"
+    "6. Write a summary_report.txt file with average residence times (integrated from P(t)) and dissociated/molecular fractions.\n"
+    "Output only the complete Python code block."
+)
 
 class ChatRequest(BaseModel):
     message: str
@@ -24,6 +41,10 @@ class ChatRequest(BaseModel):
 
 class SessionCreateRequest(BaseModel):
     title: Optional[str] = "New Session"
+
+class EvaluationRequest(BaseModel):
+    session_id: Optional[int] = None
+    prompt: Optional[str] = None
 
 @app.get("/")
 def read_root():
@@ -48,6 +69,12 @@ def get_model_info():
 def get_benchmark_prompts():
     """Curated domain prompts to benchmark Gemma4 single-shot accuracy"""
     return [
+        {
+            "id": "interfacial_script_gen",
+            "domain": "Interfacial Script Evaluation",
+            "title": "Full Interfacial Analysis Script Generator",
+            "prompt": INTERFACIAL_ANALYSIS_BENCHMARK_PROMPT
+        },
         {
             "id": "dft_cutoff",
             "domain": "DFT",
@@ -87,6 +114,185 @@ def chat_endpoint(request: ChatRequest):
         system_prompt=request.system_prompt
     )
     return result
+
+@app.post("/api/chat/stream")
+def chat_stream_endpoint(request: ChatRequest):
+    """Executes single-shot generation with live SSE token streaming"""
+    if not request.message.strip():
+        raise HTTPException(status_code=400, detail="Message cannot be empty.")
+
+    agent = SingleShotAgent()
+    return StreamingResponse(
+        agent.chat_stream(
+            user_message=request.message,
+            session_id=request.session_id,
+            system_prompt=request.system_prompt
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+@app.post("/api/evaluate_zero_shot/stream")
+def evaluate_zero_shot_stream_endpoint(request: EvaluationRequest):
+    """
+    Executes Interfacial Water Analysis zero-shot benchmark on Gemma4 with live token streaming,
+    extracts code, runs accuracy evaluator, stores in SQLite, and emits the final report card.
+    """
+    prompt = request.prompt.strip() if (request.prompt and request.prompt.strip()) else INTERFACIAL_ANALYSIS_BENCHMARK_PROMPT
+    agent = SingleShotAgent()
+    system_prompt = (
+        "You are an expert computational materials scientist and Python developer. "
+        "Write complete, working, syntactically correct Python code blocks using ASE, NumPy, and Matplotlib."
+    )
+
+    def stream_generator():
+        stream = agent.chat_stream(
+            user_message=prompt,
+            session_id=request.session_id,
+            system_prompt=system_prompt
+        )
+        full_response_text = ""
+        session_id = request.session_id
+        latency_seconds = 0.0
+
+        for sse_event in stream:
+            # Yield token event directly to client
+            yield sse_event
+
+            # Inspect event if it's the 'done' event
+            if "data: " in sse_event:
+                try:
+                    payload = json.loads(sse_event.replace("data: ", "").strip())
+                    if payload.get("type") == "session":
+                        session_id = payload.get("session_id")
+                    elif payload.get("type") == "done":
+                        full_response_text = payload.get("full_response", "")
+                        latency_seconds = payload.get("latency_seconds", 0.0)
+                        session_id = payload.get("session_id", session_id)
+                except Exception:
+                    pass
+
+        # Evaluate the completed script
+        if full_response_text:
+            evaluator = ScriptEvaluator()
+            evaluation = evaluator.evaluate(full_response_text)
+
+            eval_id = insert_evaluation(
+                session_id=session_id,
+                model_name=settings.MODEL_NAME,
+                prompt=prompt,
+                generated_code=evaluation["extracted_code"],
+                score=evaluation["score"],
+                grade=evaluation["grade"],
+                category_scores_json=json.dumps(evaluation["category_scores"]),
+                evaluation_report_json=json.dumps({
+                    "passed_checks": evaluation["passed_checks"],
+                    "failed_checks": evaluation["failed_checks"],
+                    "summary": evaluation["summary"]
+                }),
+                latency_seconds=latency_seconds
+            )
+
+            eval_event = {
+                "type": "eval_complete",
+                "evaluation_id": eval_id,
+                "session_id": session_id,
+                "model": settings.MODEL_NAME,
+                "prompt": prompt,
+                "generated_code": evaluation["extracted_code"],
+                "raw_response": full_response_text,
+                "score": evaluation["score"],
+                "grade": evaluation["grade"],
+                "category_scores": evaluation["category_scores"],
+                "passed_checks": evaluation["passed_checks"],
+                "failed_checks": evaluation["failed_checks"],
+                "summary": evaluation["summary"],
+                "latency_seconds": latency_seconds
+            }
+            yield f"data: {json.dumps(eval_event)}\n\n"
+
+    return StreamingResponse(
+        stream_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+@app.post("/api/evaluate_zero_shot")
+def evaluate_zero_shot_endpoint(request: EvaluationRequest):
+    """
+    Executes the Interfacial Water Analysis zero-shot prompt on Gemma4,
+    extracts the Python script, runs the accuracy rubric evaluator,
+    and stores the benchmark metrics in SQLite.
+    """
+    prompt = request.prompt.strip() if (request.prompt and request.prompt.strip()) else INTERFACIAL_ANALYSIS_BENCHMARK_PROMPT
+    
+    agent = SingleShotAgent()
+    system_prompt = (
+        "You are an expert computational materials scientist and Python developer. "
+        "Write complete, working, syntactically correct Python code blocks using ASE, NumPy, and Matplotlib."
+    )
+    
+    chat_res = agent.chat(
+        user_message=prompt,
+        session_id=request.session_id,
+        system_prompt=system_prompt
+    )
+
+    if chat_res.get("status") != "success":
+        raise HTTPException(
+            status_code=500,
+            detail=chat_res.get("error", "Model generation failed. Check if Ollama is running.")
+        )
+
+    raw_response = chat_res.get("response", "")
+    evaluator = ScriptEvaluator()
+    evaluation = evaluator.evaluate(raw_response)
+
+    eval_id = insert_evaluation(
+        session_id=chat_res["session_id"],
+        model_name=settings.MODEL_NAME,
+        prompt=prompt,
+        generated_code=evaluation["extracted_code"],
+        score=evaluation["score"],
+        grade=evaluation["grade"],
+        category_scores_json=json.dumps(evaluation["category_scores"]),
+        evaluation_report_json=json.dumps({
+            "passed_checks": evaluation["passed_checks"],
+            "failed_checks": evaluation["failed_checks"],
+            "summary": evaluation["summary"]
+        }),
+        latency_seconds=chat_res.get("latency_seconds", 0.0)
+    )
+
+    return {
+        "status": "success",
+        "evaluation_id": eval_id,
+        "session_id": chat_res["session_id"],
+        "model": settings.MODEL_NAME,
+        "prompt": prompt,
+        "generated_code": evaluation["extracted_code"],
+        "raw_response": raw_response,
+        "score": evaluation["score"],
+        "grade": evaluation["grade"],
+        "category_scores": evaluation["category_scores"],
+        "passed_checks": evaluation["passed_checks"],
+        "failed_checks": evaluation["failed_checks"],
+        "summary": evaluation["summary"],
+        "latency_seconds": chat_res.get("latency_seconds", 0.0)
+    }
+
+@app.get("/api/evaluations")
+def list_evaluations():
+    """Retrieves previous zero-shot script evaluations"""
+    return get_evaluations(limit=25)
 
 @app.get("/api/sessions")
 def list_sessions():
@@ -137,8 +343,9 @@ def delete_session(session_id: int):
 
 @app.on_event("startup")
 async def startup_event():
+    init_db()
     print(f"Starting Scientific Computing API with active model: {settings.MODEL_NAME}")
-    print("Running in pure Single-Shot Prompt Evaluation Mode (No tools / No RAG)")
+    print("Zero-Shot Script Generation & Accuracy Evaluation Engine active")
 
 if __name__ == "__main__":
     import uvicorn
