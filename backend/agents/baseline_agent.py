@@ -40,7 +40,8 @@ class SingleShotAgent:
             "messages": messages,
             "stream": True,
             "options": {
-                "num_ctx": 4096,
+                "num_ctx": 32768,
+                "num_predict": -1,
                 "temperature": 0.2
             }
         }
@@ -50,7 +51,7 @@ class SingleShotAgent:
                 f"{self.base_url}/api/chat",
                 json=payload,
                 stream=True,
-                timeout=(10, 600)
+                timeout=(15, 3600)
             )
             response.raise_for_status()
 
@@ -196,7 +197,8 @@ class SingleShotAgent:
             "messages": messages,
             "stream": True,
             "options": {
-                "num_ctx": 4096,
+                "num_ctx": 32768,
+                "num_predict": -1,
                 "temperature": 0.2
             }
         }
@@ -211,7 +213,7 @@ class SingleShotAgent:
                 f"{self.base_url}/api/chat",
                 json=payload,
                 stream=True,
-                timeout=(10, 600)
+                timeout=(15, 3600)
             )
             response.raise_for_status()
 

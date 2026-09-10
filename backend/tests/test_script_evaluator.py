@@ -163,3 +163,26 @@ plt.subplots(2, 2)
 ```"""
     res_b = evaluator.evaluate(script_b)
     assert res_b["grade"] in ("A", "B", "C")
+
+def test_extract_python_code_with_thinking_tags():
+    evaluator = ScriptEvaluator()
+    response_with_thinking = """<details class="thinking-details"><summary><em>Thinking Process (50 words)</em></summary>
+# Thought 1: Let's consider how to write the script
+# Thought 2: We need to import ase and numpy
+</details>
+
+Here is the implementation:
+```python
+import numpy as np
+import ase
+from ase.neighborlist import neighbor_list
+print('Compiled code')
+```
+"""
+    code = evaluator.extract_python_code(response_with_thinking)
+    assert not code.startswith("<details")
+    assert "import numpy as np" in code
+    res = evaluator.evaluate(response_with_thinking)
+    assert any("Valid Python AST syntax" in p for p in res["passed_checks"])
+    assert not any("Syntax error" in f for f in res["failed_checks"])
+

@@ -171,3 +171,41 @@ def test_evaluate_zero_shot_stream_success(mocker):
     assert "eval_complete" in text
     assert '"score"' in text
     assert '"evaluation_id": 12' in text
+
+def test_chat_endpoint_agentic_mode(mocker):
+    mock_agentic_res = {
+        "status": "success",
+        "response": "Agentic RAG answer with sandbox output",
+        "model": "batiai/gemma4-e2b:q4",
+        "latency_seconds": 1.1,
+        "session_id": 105,
+        "agent_used": "AgenticRAG",
+        "mode": "agentic"
+    }
+    mocker.patch("backend.main.AgenticRAGAgent.chat", return_value=mock_agentic_res)
+
+    payload = {"message": "Run density analysis", "mode": "agentic"}
+    response = client.post("/api/chat", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["agent_used"] == "AgenticRAG"
+    assert data["mode"] == "agentic"
+
+def test_chat_stream_endpoint_agentic_mode(mocker):
+    def fake_agentic_stream(*args, **kwargs):
+        yield 'data: {"type": "session", "session_id": 106, "mode": "agentic"}\n\n'
+        yield 'data: {"type": "agent_step", "step": "rag_start", "title": "RAG", "status": "running"}\n\n'
+        yield 'data: {"type": "content", "delta": "Agentic content"}\n\n'
+        yield 'data: {"type": "done", "latency_seconds": 1.2, "mode": "agentic"}\n\n'
+
+    mocker.patch("backend.main.AgenticRAGAgent.chat_stream", side_effect=fake_agentic_stream)
+
+    payload = {"message": "Stream agentic RAG", "mode": "agentic"}
+    response = client.post("/api/chat/stream", json=payload)
+    assert response.status_code == 200
+    assert "text/event-stream" in response.headers["content-type"]
+    text = response.text
+    assert "agent_step" in text
+    assert "Agentic content" in text
+

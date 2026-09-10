@@ -1,5 +1,6 @@
 let currentSessionId = null;
 let benchmarkPrompts = [];
+let currentEngineMode = "zero_shot";
 
 // DOM Elements
 const chatThread = document.getElementById("chat-thread");
@@ -15,6 +16,66 @@ const newSessionBtn = document.getElementById("new-session-btn");
 const modelNameDisplay = document.getElementById("model-name-display");
 const toggleSidebarBtn = document.getElementById("toggle-sidebar-btn");
 const sidebar = document.getElementById("sidebar");
+
+// Mode Switcher Elements
+const btnModeZeroShot = document.getElementById("btn-mode-zero-shot");
+const btnModeAgenticRag = document.getElementById("btn-mode-agentic-rag");
+const engineStatusPill = document.getElementById("engine-status-pill");
+const engineStatusText = document.getElementById("engine-status-text");
+const sidebarModeBadge = document.getElementById("sidebar-mode-badge");
+const sidebarStatusDot = document.getElementById("sidebar-status-dot");
+const sidebarModeLabel = document.getElementById("sidebar-mode-label");
+const sidebarModeDesc = document.getElementById("sidebar-mode-desc");
+
+// Mode Switching Handler
+function setEngineMode(mode, persist = true) {
+  currentEngineMode = (mode === "agentic" || mode === "agentic_rag") ? "agentic" : "zero_shot";
+  if (persist) {
+    localStorage.setItem("scicompute_engine_mode", currentEngineMode);
+  }
+
+  if (currentEngineMode === "agentic") {
+    btnModeZeroShot?.classList.remove("active");
+    btnModeAgenticRag?.classList.add("active");
+
+    if (engineStatusPill) {
+      engineStatusPill.className = "pill-badge pill-agentic";
+    }
+    if (engineStatusText) {
+      engineStatusText.textContent = "🧠 Agentic RAG Mode (RAG • Sandbox • Web)";
+    }
+    if (sidebarStatusDot) {
+      sidebarStatusDot.style.background = "var(--accent-primary)";
+      sidebarStatusDot.style.boxShadow = "0 0 8px var(--accent-glow)";
+    }
+    if (sidebarModeLabel) {
+      sidebarModeLabel.textContent = "Agentic RAG Assistant";
+    }
+    if (sidebarModeDesc) {
+      sidebarModeDesc.textContent = "ChromaDB • Kùzu • Docker • Web";
+    }
+  } else {
+    btnModeAgenticRag?.classList.remove("active");
+    btnModeZeroShot?.classList.add("active");
+
+    if (engineStatusPill) {
+      engineStatusPill.className = "pill-badge pill-zero-shot";
+    }
+    if (engineStatusText) {
+      engineStatusText.textContent = "⚡ Zero-Shot Mode (No Tools • No RAG)";
+    }
+    if (sidebarStatusDot) {
+      sidebarStatusDot.style.background = "var(--color-info)";
+      sidebarStatusDot.style.boxShadow = "0 0 8px rgba(56, 189, 248, 0.4)";
+    }
+    if (sidebarModeLabel) {
+      sidebarModeLabel.textContent = "Zero-Shot Baseline";
+    }
+    if (sidebarModeDesc) {
+      sidebarModeDesc.textContent = "No Tools • No RAG";
+    }
+  }
+}
 
 // Category Display Metadata
 const CATEGORY_META = {
@@ -44,6 +105,7 @@ const CATEGORY_META = {
 document.addEventListener("DOMContentLoaded", async () => {
   setupTextareaAutoGrow();
   setupEventListeners();
+  setEngineMode(currentEngineMode);
   await loadModelInfo();
   await loadBenchmarkPrompts();
   await loadEvaluationHistory();
@@ -54,6 +116,12 @@ document.addEventListener("DOMContentLoaded", async () => {
 function setupEventListeners() {
   if (runFlagshipEvalBtn) {
     runFlagshipEvalBtn.addEventListener("click", handleRunFlagshipEvaluation);
+  }
+  if (btnModeZeroShot) {
+    btnModeZeroShot.addEventListener("click", () => setEngineMode("zero_shot"));
+  }
+  if (btnModeAgenticRag) {
+    btnModeAgenticRag.addEventListener("click", () => setEngineMode("agentic"));
   }
 }
 
@@ -137,6 +205,9 @@ function selectBenchmarkPrompt(bp) {
 async function handleRunFlagshipEvaluation() {
   if (!runFlagshipEvalBtn) return;
 
+  // Explicitly ensure UI is in Zero-Shot Evaluation Mode
+  setEngineMode("zero_shot", false);
+
   const originalBtnHtml = runFlagshipEvalBtn.innerHTML;
   runFlagshipEvalBtn.disabled = true;
   runFlagshipEvalBtn.innerHTML = `
@@ -159,7 +230,14 @@ async function handleRunFlagshipEvaluation() {
       <span class="live-model-pill">batiai/gemma4-e2b:q4 • Zero-Shot Evaluation</span>
     </div>
     <details class="thinking-details" style="display:none;" open>
-      <summary><em>🧠 Thinking Process (<span class="thinking-word-count">0</span> words)</em></summary>
+      <summary class="thinking-summary">
+        <div class="thinking-summary-left">
+          <span class="thinking-summary-icon">🧠</span>
+          <span class="thinking-summary-title">Thinking Process</span>
+          <span class="thinking-summary-count"><span class="thinking-word-count">0</span> words</span>
+        </div>
+        <span class="thinking-summary-chevron">▾</span>
+      </summary>
       <div class="thinking-stream-content"></div>
     </details>
     <div class="content-stream-container"></div>
@@ -227,7 +305,7 @@ async function handleRunFlagshipEvaluation() {
           } else if (event.type === "thinking") {
             thinkingDetails.style.display = "block";
             thinkingAccumulated += event.delta;
-            thinkingContent.textContent = thinkingAccumulated;
+            thinkingContent.innerHTML = renderThinkingBody(thinkingAccumulated);
             const words = thinkingAccumulated.split(/\s+/).filter(Boolean).length;
             thinkingWordCount.textContent = words;
             scrollToBottom();
@@ -245,6 +323,7 @@ async function handleRunFlagshipEvaluation() {
             const elapsed = event.latency_seconds !== undefined ? event.latency_seconds.toFixed(1) : ((Date.now() - startTime) / 1000).toFixed(1);
             timerBadge.textContent = `⚡ Generated in ${elapsed}s • Scoring AST...`;
             if (thinkingAccumulated) {
+              thinkingContent.innerHTML = renderThinkingBody(thinkingAccumulated);
               thinkingDetails.open = false;
             }
             contentContainer.innerHTML = renderMarkdown(contentAccumulated, false);
@@ -493,8 +572,14 @@ async function loadSessions() {
     sessions.forEach((s) => {
       const el = document.createElement("div");
       el.className = `session-item ${currentSessionId === s.id ? "active" : ""}`;
+      const isAgentic = (s.mode === "agentic" || s.agent_used === "AgenticRAG");
+      const badgeHtml = isAgentic
+        ? `<span class="session-mode-badge badge-agentic">🧠 Agentic</span>`
+        : `<span class="session-mode-badge badge-zero-shot">⚡ Zero-Shot</span>`;
+
       el.innerHTML = `
         <span class="session-title-text" title="${escapeHtml(s.title)}">${escapeHtml(s.title)}</span>
+        ${badgeHtml}
         <button class="session-delete-btn" title="Delete session">&times;</button>
       `;
       el.addEventListener("click", (e) => {
@@ -522,8 +607,19 @@ async function switchSession(sessionId) {
     if (!res.ok) return;
     const messages = await res.json();
 
+    // Automatically synchronize engine mode to match the loaded session
+    const hasAgenticMessage = messages.some(
+      (m) => m.agent_used === "AgenticRAG" || m.agent_used === "agentic"
+    );
+    setEngineMode(hasAgenticMessage ? "agentic" : "zero_shot", false);
+
     messages.forEach((msg) => {
-      appendMessage(msg.role, msg.content, { timestamp: msg.timestamp });
+      appendMessage(msg.role, msg.content, {
+        timestamp: msg.timestamp,
+        agent_used: msg.agent_used,
+        model: msg.model_name,
+        tool_calls_json: msg.tool_calls_json
+      });
     });
     scrollToBottom();
     await loadSessions();
@@ -557,7 +653,62 @@ function startNewSession() {
 
 newSessionBtn.addEventListener("click", startNewSession);
 
-// Chat Submission with Real-Time Token Streaming
+// Render or update intermediate agentic execution steps in the message bubble
+function renderAgentTraceStep(container, stepEvent) {
+  if (!container) return;
+  container.style.display = "flex";
+
+  const stepKey = stepEvent.step || "step";
+  let stepEl = container.querySelector(`[data-step="${stepKey}"]`);
+  
+  let icon = "⚡";
+  if (stepKey.startsWith("rag")) icon = "📚";
+  else if (stepKey.startsWith("code_gen")) icon = "📝";
+  else if (stepKey.startsWith("sandbox")) icon = "🐳";
+  else if (stepKey.startsWith("web")) icon = "🌐";
+  else if (stepKey.startsWith("synthesis")) icon = "🧠";
+
+  const statusClass = stepEvent.status || "running";
+  const titleText = stepEvent.title || "Agent Execution Step";
+
+  if (!stepEl) {
+    stepEl = document.createElement("div");
+    stepEl.className = `agent-trace-step ${statusClass}`;
+    stepEl.setAttribute("data-step", stepKey);
+
+    stepEl.innerHTML = `
+      <div class="agent-trace-icon">${icon}</div>
+      <div class="agent-trace-body">
+        <div class="agent-trace-title">
+          <span>${escapeHtml(titleText)}</span>
+          <span class="agent-trace-status ${statusClass}">${escapeHtml(statusClass)}</span>
+        </div>
+        ${stepEvent.details ? `<div class="agent-trace-details">${escapeHtml(stepEvent.details)}</div>` : ""}
+      </div>
+    `;
+    container.appendChild(stepEl);
+  } else {
+    stepEl.className = `agent-trace-step ${statusClass}`;
+    const statusSpan = stepEl.querySelector(".agent-trace-status");
+    if (statusSpan) {
+      statusSpan.className = `agent-trace-status ${statusClass}`;
+      statusSpan.textContent = statusClass;
+    }
+    const detailsDiv = stepEl.querySelector(".agent-trace-details");
+    if (stepEvent.details) {
+      if (detailsDiv) {
+        detailsDiv.textContent = stepEvent.details;
+      } else {
+        const newDetails = document.createElement("div");
+        newDetails.className = "agent-trace-details";
+        newDetails.textContent = stepEvent.details;
+        stepEl.querySelector(".agent-trace-body").appendChild(newDetails);
+      }
+    }
+  }
+}
+
+// Chat Submission with Real-Time Token Streaming & Mode Dispatch
 chatForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const text = promptInput.value.trim();
@@ -570,6 +721,8 @@ chatForm.addEventListener("submit", async (e) => {
   appendMessage("user", text);
   scrollToBottom();
 
+  const isAgentic = (currentEngineMode === "agentic");
+
   // Create streaming assistant message bubble
   const assistantItem = document.createElement("div");
   assistantItem.className = "message-item assistant";
@@ -579,11 +732,19 @@ chatForm.addEventListener("submit", async (e) => {
 
   bubble.innerHTML = `
     <div class="stream-header-bar">
-      <span class="live-timer-badge">⏳ Starting inference... 0.0s</span>
-      <span class="live-model-pill">batiai/gemma4-e2b:q4 • Live Stream</span>
+      <span class="live-timer-badge">⏳ ${isAgentic ? "Agentic RAG Pipeline Active..." : "Starting inference..."} 0.0s</span>
+      <span class="live-model-pill">${isAgentic ? "🧠 Agentic RAG • ChromaDB + Sandbox + Web" : "batiai/gemma4-e2b:q4 • Zero-Shot Baseline"}</span>
     </div>
+    <div class="agent-trace-container" style="${isAgentic ? "" : "display:none;"}"></div>
     <details class="thinking-details" style="display:none;" open>
-      <summary><em>🧠 Thinking Process (<span class="thinking-word-count">0</span> words)</em></summary>
+      <summary class="thinking-summary">
+        <div class="thinking-summary-left">
+          <span class="thinking-summary-icon">🧠</span>
+          <span class="thinking-summary-title">Thinking Process</span>
+          <span class="thinking-summary-count"><span class="thinking-word-count">0</span> words</span>
+        </div>
+        <span class="thinking-summary-chevron">▾</span>
+      </summary>
       <div class="thinking-stream-content"></div>
     </details>
     <div class="content-stream-container"></div>
@@ -595,6 +756,7 @@ chatForm.addEventListener("submit", async (e) => {
   scrollToBottom();
 
   const timerBadge = bubble.querySelector(".live-timer-badge");
+  const agentTraceContainer = bubble.querySelector(".agent-trace-container");
   const thinkingDetails = bubble.querySelector(".thinking-details");
   const thinkingWordCount = bubble.querySelector(".thinking-word-count");
   const thinkingContent = bubble.querySelector(".thinking-stream-content");
@@ -604,7 +766,9 @@ chatForm.addEventListener("submit", async (e) => {
   const startTime = Date.now();
   const timerInterval = setInterval(() => {
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-    timerBadge.textContent = `⏳ Streaming... ${elapsed}s`;
+    timerBadge.textContent = isAgentic
+      ? `🧠 Agentic Workflow... ${elapsed}s`
+      : `⏳ Streaming... ${elapsed}s`;
   }, 100);
 
   try {
@@ -614,7 +778,7 @@ chatForm.addEventListener("submit", async (e) => {
       body: JSON.stringify({
         message: text,
         session_id: currentSessionId,
-        mode: "single_shot"
+        mode: isAgentic ? "agentic" : "single_shot"
       })
     });
 
@@ -651,10 +815,13 @@ chatForm.addEventListener("submit", async (e) => {
 
           if (event.type === "session") {
             currentSessionId = event.session_id;
+          } else if (event.type === "agent_step") {
+            renderAgentTraceStep(agentTraceContainer, event);
+            scrollToBottom();
           } else if (event.type === "thinking") {
             thinkingDetails.style.display = "block";
             thinkingAccumulated += event.delta;
-            thinkingContent.textContent = thinkingAccumulated;
+            thinkingContent.innerHTML = renderThinkingBody(thinkingAccumulated);
             const words = thinkingAccumulated.split(/\s+/).filter(Boolean).length;
             thinkingWordCount.textContent = words;
             scrollToBottom();
@@ -674,6 +841,7 @@ chatForm.addEventListener("submit", async (e) => {
               contentContainer.innerHTML = renderMarkdown(contentAccumulated, false);
             }
             if (thinkingAccumulated) {
+              thinkingContent.innerHTML = renderThinkingBody(thinkingAccumulated);
               thinkingDetails.open = false; // Collapse thinking process upon completion
             }
 
@@ -683,7 +851,7 @@ chatForm.addEventListener("submit", async (e) => {
             metaDiv.innerHTML = `
               <span class="latency-pill">⚡ ${elapsed}s</span>
               <span>batiai/gemma4-e2b:q4</span>
-              <span>Live Single-Shot</span>
+              <span>${isAgentic ? "Agentic RAG Engine" : "Zero-Shot Baseline"}</span>
             `;
             bubble.appendChild(metaDiv);
 
@@ -717,22 +885,47 @@ function appendMessage(role, content, meta = {}) {
 
   const bubble = document.createElement("div");
   bubble.className = "message-bubble";
-  bubble.innerHTML = renderMarkdown(content);
+
+  // If this message has stored tool/agent trace steps, display them at the top of the bubble
+  if (role === "assistant" && meta.tool_calls_json) {
+    try {
+      const steps = typeof meta.tool_calls_json === "string" ? JSON.parse(meta.tool_calls_json) : meta.tool_calls_json;
+      if (Array.isArray(steps) && steps.length > 0) {
+        const traceContainer = document.createElement("div");
+        traceContainer.className = "agent-trace-container";
+        traceContainer.style.display = "flex";
+        steps.forEach((step) => {
+          renderAgentTraceStep(traceContainer, step);
+        });
+        bubble.appendChild(traceContainer);
+      }
+    } catch (e) {
+      console.warn("Error rendering saved agent steps:", e);
+    }
+  }
+
+  const contentDiv = document.createElement("div");
+  contentDiv.innerHTML = renderMarkdown(content);
+  bubble.appendChild(contentDiv);
 
   item.appendChild(bubble);
 
-  if (role === "assistant" && meta.latency !== undefined) {
+  if (role === "assistant") {
     const metaDiv = document.createElement("div");
     metaDiv.className = "message-meta";
+    const isAgent = (meta.agent_used === "AgenticRAG" || meta.mode === "agentic");
+    const agentLabel = isAgent ? "Agentic RAG Engine" : "Zero-Shot Baseline";
+    const latencyPart = meta.latency !== undefined ? `<span class="latency-pill">⚡ ${Number(meta.latency).toFixed(1)}s</span>` : "";
     metaDiv.innerHTML = `
-      <span class="latency-pill">⚡ ${meta.latency}s</span>
-      <span>${escapeHtml(meta.model || "Gemma4")}</span>
-      <span>Pure Single-Shot</span>
+      ${latencyPart}
+      <span>${escapeHtml(meta.model || "batiai/gemma4-e2b:q4")}</span>
+      <span>${agentLabel}</span>
     `;
     item.appendChild(metaDiv);
   }
 
   chatThread.appendChild(item);
+  hydrateMathFormulas(bubble);
 }
 
 function showTypingIndicator() {
@@ -753,13 +946,176 @@ function scrollToBottom() {
   messagesContainer.scrollTop = messagesContainer.scrollHeight;
 }
 
+// Render formatted text and KaTeX math formulas inside thinking details blocks
+function renderThinkingBody(raw) {
+  if (!raw) return "";
+  let text = raw.trim();
+
+  // 1. Extract and protect display math ($$...$$ or \[...\])
+  const displayMaths = [];
+  text = text.replace(/\$\$([\s\S]+?)\$\$/g, (match, tex) => {
+    const rendered = renderKatex(tex, true);
+    const token = `__THINK_DMATH_${displayMaths.length}__`;
+    displayMaths.push(rendered);
+    return token;
+  });
+  text = text.replace(/\\\[([\s\S]+?)\\\]/g, (match, tex) => {
+    const rendered = renderKatex(tex, true);
+    const token = `__THINK_DMATH_${displayMaths.length}__`;
+    displayMaths.push(rendered);
+    return token;
+  });
+
+  // 2. Extract and protect inline math (\(...\) or $...$)
+  const inlineMaths = [];
+  text = text.replace(/\\\(([\s\S]+?)\\\)/g, (match, tex) => {
+    const rendered = renderKatex(tex, false);
+    const token = `__THINK_IMATH_${inlineMaths.length}__`;
+    inlineMaths.push(rendered);
+    return token;
+  });
+  text = text.replace(/\$([^\$\n]+?)\$/g, (match, tex) => {
+    const trimmed = tex.trim();
+    if (!trimmed || /^\d+(?:,\d{3})*(?:\.\d+)?$/.test(trimmed)) return match;
+    const rendered = renderKatex(trimmed, false);
+    const token = `__THINK_IMATH_${inlineMaths.length}__`;
+    inlineMaths.push(rendered);
+    return token;
+  });
+
+  // 3. Extract and protect code blocks
+  const codeBlocks = [];
+  text = text.replace(/```([a-zA-Z0-9_\-]+)?\n([\s\S]*?)```/g, (m, lang, code) => {
+    const token = `__THINK_CODE_${codeBlocks.length}__`;
+    codeBlocks.push(`<pre class="thinking-code-block"><code>${escapeHtml(code.trim())}</code></pre>`);
+    return token;
+  });
+
+  // 4. Extract and protect inline code
+  const inlineCodes = [];
+  text = text.replace(/`([^`\n]+)`/g, (m, code) => {
+    const token = `__THINK_ICODE_${inlineCodes.length}__`;
+    inlineCodes.push(`<code class="thinking-inline-code">${escapeHtml(code)}</code>`);
+    return token;
+  });
+
+  // 5. Unescape markdown underscores and escape non-math text safely
+  text = text.replace(/\\_/g, "_");
+  text = escapeHtml(text);
+
+  // 6. Bold: **text**
+  text = text.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+
+  // 7. Parse line by line for structured lists, sub-bullets, and paragraphs
+  const lines = text.split("\n");
+  const processedLines = [];
+  let inOl = false;
+  let inUl = false;
+  let inSubUl = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    if (!trimmed) {
+      if (inSubUl) { processedLines.push("</ul>"); inSubUl = false; }
+      continue;
+    }
+
+    // Sub-bullet indented (2+ spaces or tab followed by * or -)
+    const subUlMatch = line.match(/^(\s{2,}|\t+)[\*\-]\s+(.*)$/);
+    if (subUlMatch) {
+      if (!inSubUl) {
+        processedLines.push('<ul class="thinking-sub-ul">');
+        inSubUl = true;
+      }
+      let content = subUlMatch[2].replace(/\*([^*]+)\*/g, "<em>$1</em>");
+      processedLines.push(`<li>${content}</li>`);
+      continue;
+    } else if (inSubUl) {
+      processedLines.push("</ul>");
+      inSubUl = false;
+    }
+
+    // Numbered item: 1. , 2. etc
+    const olMatch = trimmed.match(/^(\d+)\.\s+(.*)$/);
+    if (olMatch) {
+      if (inUl) { processedLines.push("</ul>"); inUl = false; }
+      if (!inOl) { processedLines.push('<ol class="thinking-ol">'); inOl = true; }
+      let content = olMatch[2].replace(/\*([^*]+)\*/g, "<em>$1</em>");
+      processedLines.push(`<li>${content}</li>`);
+      continue;
+    }
+
+    // Bullet item: * or -
+    const ulMatch = trimmed.match(/^[\*\-]\s+(.*)$/);
+    if (ulMatch) {
+      if (inOl) { processedLines.push("</ol>"); inOl = false; }
+      if (!inUl) { processedLines.push('<ul class="thinking-ul">'); inUl = true; }
+      let content = ulMatch[1].replace(/\*([^*]+)\*/g, "<em>$1</em>");
+      processedLines.push(`<li>${content}</li>`);
+      continue;
+    }
+
+    // Normal paragraph line
+    if (inOl) { processedLines.push("</ol>"); inOl = false; }
+    if (inUl) { processedLines.push("</ul>"); inUl = false; }
+    let content = trimmed.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+    processedLines.push(`<p class="thinking-p">${content}</p>`);
+  }
+
+  if (inSubUl) processedLines.push("</ul>");
+  if (inUl) processedLines.push("</ul>");
+  if (inOl) processedLines.push("</ol>");
+
+  let result = processedLines.join("\n");
+
+  // 8. Restore KaTeX rendered math and code tokens safely without $ pattern corruption
+  displayMaths.forEach((m, i) => {
+    result = result.replace(new RegExp(`__THINK_DMATH_${i}__`, "g"), () => m);
+  });
+  inlineMaths.forEach((m, i) => {
+    result = result.replace(new RegExp(`__THINK_IMATH_${i}__`, "g"), () => m);
+  });
+  codeBlocks.forEach((c, i) => {
+    result = result.replace(new RegExp(`__THINK_CODE_${i}__`, "g"), () => c);
+  });
+  inlineCodes.forEach((c, i) => {
+    result = result.replace(new RegExp(`__THINK_ICODE_${i}__`, "g"), () => c);
+  });
+
+  return result;
+}
+
 // Lightweight Markdown & Scientific LaTeX Renderer with KaTeX Studio
 function renderMarkdown(raw, isStreaming = false) {
   if (!raw) return "";
   let text = raw;
 
-  // 1. Protect existing HTML details blocks (e.g. from session history)
+  // 1. Process and protect details / thinking blocks with KaTeX math rendering
   const detailsBlocks = [];
+  text = text.replace(/<details class="thinking-details"([\s\S]*?)>([\s\S]*?)<\/details>/gi, (match, attrs, inner) => {
+    const summaryMatch = inner.match(/<summary>([\s\S]*?)<\/summary>/i);
+    let countMatch = summaryMatch ? summaryMatch[1].match(/\((\d+)\s*words\)/i) : null;
+    const rawBody = inner.replace(/<summary>[\s\S]*?<\/summary>/i, "").trim();
+    let wordCount = countMatch ? countMatch[1] : (rawBody ? rawBody.split(/\s+/).filter(Boolean).length : 0);
+    const renderedBody = renderThinkingBody(rawBody);
+    const summaryHtml = `
+      <summary class="thinking-summary">
+        <div class="thinking-summary-left">
+          <span class="thinking-summary-icon">🧠</span>
+          <span class="thinking-summary-title">Thinking Process</span>
+          <span class="thinking-summary-count">${wordCount} words</span>
+        </div>
+        <span class="thinking-summary-chevron">▾</span>
+      </summary>
+    `;
+    const html = `<details class="thinking-details"${attrs}>${summaryHtml}<div class="thinking-stream-content">${renderedBody}</div></details>`;
+    const token = `__DETAILS_BLOCK_${detailsBlocks.length}__`;
+    detailsBlocks.push(html);
+    return token;
+  });
+
+  // Handle any other details blocks
   text = text.replace(/<details[\s\S]*?<\/details>/gi, (match) => {
     const token = `__DETAILS_BLOCK_${detailsBlocks.length}__`;
     detailsBlocks.push(match);
@@ -850,7 +1206,9 @@ function renderMarkdown(raw, isStreaming = false) {
     return token;
   });
 
-  // 7. Markdown Headings
+  // 7. Markdown Headings (h5 through h1)
+  text = text.replace(/^##### (.*$)/gim, "<h5>$1</h5>");
+  text = text.replace(/^#### (.*$)/gim, "<h4>$1</h4>");
   text = text.replace(/^### (.*$)/gim, "<h3>$1</h3>");
   text = text.replace(/^## (.*$)/gim, "<h2>$1</h2>");
   text = text.replace(/^# (.*$)/gim, "<h1>$1</h1>");
@@ -870,31 +1228,31 @@ function renderMarkdown(raw, isStreaming = false) {
       if (p.startsWith("__CODE_BLOCK_") && p.endsWith("__")) return p;
       if (p.startsWith("__DISPLAY_MATH_") && p.endsWith("__")) return p;
       if (p.startsWith("__DETAILS_BLOCK_") && p.endsWith("__")) return p;
-      if (p.startsWith("<h1") || p.startsWith("<h2") || p.startsWith("<h3")) return p;
+      if (p.startsWith("<h1") || p.startsWith("<h2") || p.startsWith("<h3") || p.startsWith("<h4") || p.startsWith("<h5")) return p;
       return `<p>${p.replace(/\n/g, "<br>")}</p>`;
     })
     .filter(Boolean)
     .join("");
 
-  // 11. Restore tokens in reverse order
+  // 11. Restore tokens in reverse order safely without $ pattern corruption
   displayMaths.forEach((mathHtml, i) => {
-    rendered = rendered.replace(new RegExp(`<p>__DISPLAY_MATH_${i}__</p>|__DISPLAY_MATH_${i}__`, "g"), mathHtml);
+    rendered = rendered.replace(new RegExp(`<p>__DISPLAY_MATH_${i}__</p>|__DISPLAY_MATH_${i}__`, "g"), () => mathHtml);
   });
 
   inlineMaths.forEach((mathHtml, i) => {
-    rendered = rendered.replace(new RegExp(`__INLINE_MATH_${i}__`, "g"), mathHtml);
+    rendered = rendered.replace(new RegExp(`__INLINE_MATH_${i}__`, "g"), () => mathHtml);
   });
 
   inlineCodes.forEach((codeHtml, i) => {
-    rendered = rendered.replace(new RegExp(`__INLINE_CODE_${i}__`, "g"), codeHtml);
+    rendered = rendered.replace(new RegExp(`__INLINE_CODE_${i}__`, "g"), () => codeHtml);
   });
 
   codeBlocks.forEach((blockHtml, i) => {
-    rendered = rendered.replace(new RegExp(`<p>__CODE_BLOCK_${i}__</p>|__CODE_BLOCK_${i}__`, "g"), blockHtml);
+    rendered = rendered.replace(new RegExp(`<p>__CODE_BLOCK_${i}__</p>|__CODE_BLOCK_${i}__`, "g"), () => blockHtml);
   });
 
   detailsBlocks.forEach((detailsHtml, i) => {
-    rendered = rendered.replace(new RegExp(`<p>__DETAILS_BLOCK_${i}__</p>|__DETAILS_BLOCK_${i}__`, "g"), detailsHtml);
+    rendered = rendered.replace(new RegExp(`<p>__DETAILS_BLOCK_${i}__</p>|__DETAILS_BLOCK_${i}__`, "g"), () => detailsHtml);
   });
 
   return rendered;

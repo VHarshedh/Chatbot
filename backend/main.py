@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from backend.config import settings
 from backend.agents.baseline_agent import SingleShotAgent
+from backend.agents.agentic_agent import AgenticRAGAgent
 from backend.evaluation.script_evaluator import ScriptEvaluator
 from backend.db.models import execute_query, insert_session, insert_evaluation, get_evaluations
 from backend.db.migrations import init_db
@@ -103,11 +104,15 @@ def get_benchmark_prompts():
 
 @app.post("/api/chat")
 def chat_endpoint(request: ChatRequest):
-    """Executes single-shot generation and logs the conversation"""
+    """Executes single-shot or agentic RAG generation and logs the conversation"""
     if not request.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty.")
 
-    agent = SingleShotAgent()
+    if request.mode in ["agentic", "agentic_rag"]:
+        agent = AgenticRAGAgent()
+    else:
+        agent = SingleShotAgent()
+
     result = agent.chat(
         user_message=request.message,
         session_id=request.session_id,
@@ -117,11 +122,15 @@ def chat_endpoint(request: ChatRequest):
 
 @app.post("/api/chat/stream")
 def chat_stream_endpoint(request: ChatRequest):
-    """Executes single-shot generation with live SSE token streaming"""
+    """Executes single-shot or agentic RAG generation with live SSE token streaming"""
     if not request.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty.")
 
-    agent = SingleShotAgent()
+    if request.mode in ["agentic", "agentic_rag"]:
+        agent = AgenticRAGAgent()
+    else:
+        agent = SingleShotAgent()
+
     return StreamingResponse(
         agent.chat_stream(
             user_message=request.message,
@@ -296,25 +305,35 @@ def list_evaluations():
 
 @app.get("/api/sessions")
 def list_sessions():
-    """Retrieves previous chat sessions"""
+    """Retrieves previous chat sessions with their execution mode"""
     rows = execute_query(
-        "SELECT id, title, created_at, last_message_at FROM sessions ORDER BY last_message_at DESC LIMIT 50"
+        """
+        SELECT s.id, s.title, s.created_at, s.last_message_at,
+               (SELECT m.agent_used FROM messages m WHERE m.session_id = s.id AND m.role = 'assistant' ORDER BY m.id DESC LIMIT 1) as last_agent_used
+        FROM sessions s ORDER BY s.last_message_at DESC LIMIT 50
+        """
     )
-    return [
-        {
+    result = []
+    for row in rows:
+        try:
+            agent_used = row["last_agent_used"]
+        except (KeyError, IndexError):
+            agent_used = None
+        result.append({
             "id": row["id"],
             "title": row["title"],
             "created_at": row["created_at"],
-            "last_message_at": row["last_message_at"]
-        }
-        for row in rows
-    ]
+            "last_message_at": row["last_message_at"],
+            "mode": "agentic" if agent_used in ["AgenticRAG", "agentic"] else "zero_shot",
+            "agent_used": agent_used or "SingleShotAgent"
+        })
+    return result
 
 @app.get("/api/sessions/{session_id}/messages")
 def get_session_messages(session_id: int):
     """Retrieves all messages for a specific session"""
     rows = execute_query(
-        "SELECT id, role, content, timestamp, agent_used FROM messages WHERE session_id = ? ORDER BY id ASC",
+        "SELECT id, role, content, timestamp, agent_used, tool_calls_json FROM messages WHERE session_id = ? ORDER BY id ASC",
         (session_id,)
     )
     return [
@@ -323,7 +342,8 @@ def get_session_messages(session_id: int):
             "role": row["role"],
             "content": row["content"],
             "timestamp": row["timestamp"],
-            "agent_used": row["agent_used"]
+            "agent_used": row["agent_used"],
+            "tool_calls_json": row.get("tool_calls_json") if hasattr(row, "get") else None
         }
         for row in rows
     ]

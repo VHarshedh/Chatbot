@@ -64,11 +64,11 @@
 
       <!-- Status Footer -->
       <div class="sidebar-footer">
-        <div class="mode-badge">
-          <span class="status-dot active"></span>
+        <div class="mode-badge" id="sidebar-mode-badge">
+          <span class="status-dot active" id="sidebar-status-dot"></span>
           <div class="mode-info">
-            <span class="mode-label">Zero-Shot Baseline</span>
-            <span class="mode-desc">No Tools • No RAG</span>
+            <span class="mode-label" id="sidebar-mode-label">Zero-Shot Baseline</span>
+            <span class="mode-desc" id="sidebar-mode-desc">No Tools • No RAG</span>
           </div>
         </div>
       </div>
@@ -76,7 +76,7 @@
 
     <!-- Main Chat Workspace -->
     <main class="chat-main">
-      <!-- Top Navigation Bar -->
+      <!-- Top Navigation Bar with Mode Switcher -->
       <header class="chat-header">
         <div class="header-left">
           <button id="toggle-sidebar-btn" class="icon-btn mobile-only" aria-label="Toggle Menu">
@@ -87,10 +87,29 @@
             <span class="badge-val" id="model-name-display">batiai/gemma4-e2b:q4</span>
           </div>
         </div>
+
+        <!-- Mode Switcher Buttons in Top Bar -->
+        <div class="mode-switch-container" id="mode-switch-container" role="tablist" aria-label="Engine Execution Mode">
+          <button type="button" class="mode-toggle-btn active" id="btn-mode-zero-shot" data-mode="zero_shot" title="Zero-Shot Baseline: Direct model generation with zero tools and zero RAG">
+            <span class="mode-icon">⚡</span>
+            <span class="mode-text">
+              <span class="mode-main-title">Zero-Shot Model</span>
+              <span class="mode-sub-title">Isolated Baseline</span>
+            </span>
+          </button>
+          <button type="button" class="mode-toggle-btn" id="btn-mode-agentic-rag" data-mode="agentic" title="Agentic RAG: Full access to ChromaDB/Kùzu Knowledge Graph, Docker Sandbox, and Web Search">
+            <span class="mode-icon">🧠</span>
+            <span class="mode-text">
+              <span class="mode-main-title">Agentic RAG</span>
+              <span class="mode-sub-title">RAG • Sandbox • Web</span>
+            </span>
+          </button>
+        </div>
+
         <div class="header-right">
-          <div class="pill-badge pill-neutral">
+          <div class="pill-badge pill-neutral" id="engine-status-pill">
             <span class="pulse-indicator"></span>
-            Ollama Zero-Shot Engine
+            <span id="engine-status-text">⚡ Zero-Shot Mode (No Tools)</span>
           </div>
         </div>
       </header>

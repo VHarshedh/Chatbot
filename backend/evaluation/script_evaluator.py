@@ -15,17 +15,38 @@ class ScriptEvaluator:
         if not raw_text:
             return ""
 
-        # Find fenced python code blocks
-        blocks = re.findall(r"```(?:python)?\s*\n([\s\S]*?)```", raw_text, re.IGNORECASE)
-        if blocks:
-            # Return the largest code block
-            return max(blocks, key=len).strip()
+        # 1. Strip out thinking details blocks so HTML details never contaminate Python code
+        cleaned_text = re.sub(r"<details[\s\S]*?<\/details>", "", raw_text, flags=re.IGNORECASE).strip()
 
-        # Fallback: if raw text already looks like python code
-        lines = raw_text.strip().split("\n")
-        code_lines = [l for l in lines if l.strip().startswith(("import ", "from ", "def ", "class ", "#", "for ", "if "))]
-        if len(code_lines) >= 3:
-            return raw_text.strip()
+        # 2. Match fenced python code blocks with or without closing fence
+        blocks = re.findall(r"```(?:python|py)?\s*?\n?([\s\S]*?)(?:```|$)", cleaned_text, re.IGNORECASE)
+        
+        # Filter for candidates that actually contain code statements
+        code_candidates = []
+        for b in blocks:
+            code_candidate = b.strip()
+            if not code_candidate:
+                continue
+            lines = [l.strip() for l in code_candidate.splitlines() if l.strip() and not l.strip().startswith("#")]
+            if any(l.startswith(("import ", "from ", "def ", "class ", "for ", "while ", "with ", "atoms", "m =")) or "=" in l for l in lines):
+                code_candidates.append(code_candidate)
+
+        if code_candidates:
+            return max(code_candidates, key=len).strip()
+
+        # 3. Fallback: find the first import or def statement and extract down
+        lines = cleaned_text.splitlines()
+        start_idx = -1
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith(("import ", "from ", "def ", "class ")) and not stripped.startswith(("<", "#")):
+                start_idx = i
+                break
+
+        if start_idx != -1:
+            extracted = "\n".join(lines[start_idx:]).strip()
+            extracted = re.sub(r"```+$", "", extracted).strip()
+            return extracted
 
         return ""
 
