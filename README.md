@@ -185,6 +185,11 @@ ChatBot/
 │   ├── pytest.ini                              # Pytest configuration and coverage flags
 │   └── requirements.txt                        # Core Python dependencies
 │
+├── frontend/                                    # Interactive Web Chat Interface
+│   ├── index.html                              # Single-page UI with benchmark cards
+│   ├── style.css                               # Glassmorphic dark-mode design system
+│   └── app.js                                  # Client-side chat and session controller
+│
 └── README.md                                    # Root documentation (this file)
 ```
 
@@ -313,7 +318,7 @@ Before launching agents or the API for the first time, initialize the persistent
 
 ---
 
-### Phase 3: Launching the Backend API
+### Phase 3: Launching the Backend API & Web Frontend
 
 Start the FastAPI REST server:
 
@@ -325,20 +330,25 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
 python -m backend.main
 ```
 
-- **Health check endpoint**: Open `http://localhost:8000/` in your browser. You should see:
-  ```json
-  {"status": "ok", "message": "API is running"}
-  ```
-- **Interactive Swagger Docs**: Open `http://localhost:8000/docs` to inspect available endpoints.
+- **Interactive Web Chat Frontend**: Open **`http://localhost:8000/`** in your browser to access the dark-mode scientific computing chat interface.
+  - Test single-shot accuracy with one-click **Domain Benchmark Prompts** for DFT, MD, DeePMD Training, and Surface Kinetics.
+  - Live response latency tracking (`⚡ 1.42s`).
+  - Session history and thread management.
+- **Interactive Swagger Docs**: Open `http://localhost:8000/docs` to test raw API endpoints.
 
 ---
 
-### Phase 4: Running the AI Agents
+### Phase 4: Single-Shot Evaluation & Agent Testing
 
-You can run each agent standalone to test its capabilities:
+#### 1. Single-Shot Baseline Evaluation (Gemma4)
+Evaluates `batiai/gemma4-e2b:q4` directly with zero tools and zero RAG to benchmark raw scientific intelligence:
+```bash
+python -m backend.agents.baseline_agent
+```
+Or use the web interface at `http://localhost:8000/`.
 
-#### 1. Run the Scientific Q&A Agent
-Queries the Hybrid Retriever and synthesizes domain answers:
+#### 2. Run the Hybrid RAG Scientific Q&A Agent
+Queries the Hybrid Retriever (ChromaDB + Kùzu Knowledge Graph) and synthesizes domain answers:
 ```bash
 python -m backend.agents.qa_agent
 ```

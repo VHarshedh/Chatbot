@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Scientific Computing AI — Single-Shot Evaluation</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <div class="brand">
+          <div class="brand-icon">⚛</div>
+          <div class="brand-text">
+            <h2>SciCompute AI</h2>
+            <span class="subtext">Materials & Chemistry</span>
+          </div>
+        </div>
+        <button id="new-session-btn" class="btn btn-primary btn-new-session" title="Start a fresh chat session">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          New Session
+        </button>
+      </div>
+
+      <!-- Domain Benchmark Presets -->
+      <div class="sidebar-section">
+        <h3 class="section-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+          Benchmark Prompts
+        </h3>
+        <p class="section-desc">One-click tests for raw model accuracy:</p>
+        <div class="benchmark-list" id="benchmark-list">
+          <!-- Dynamically populated from /api/benchmark_prompts -->
+        </div>
+      </div>
+
+      <!-- Session History -->
+      <div class="sidebar-section flex-grow">
+        <h3 class="section-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+          Chat History
+        </h3>
+        <div class="session-list" id="session-list">
+          <!-- Dynamically populated -->
+        </div>
+      </div>
+
+      <!-- Status Footer -->
+      <div class="sidebar-footer">
+        <div class="mode-badge">
+          <span class="status-dot active"></span>
+          <div class="mode-info">
+            <span class="mode-label">Single-Shot Baseline</span>
+            <span class="mode-desc">Zero Tools • Zero RAG</span>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Chat Workspace -->
+    <main class="chat-main">
+      <!-- Top Navigation Bar -->
+      <header class="chat-header">
+        <div class="header-left">
+          <button id="toggle-sidebar-btn" class="icon-btn mobile-only" aria-label="Toggle Menu">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+          </button>
+          <div class="model-badge">
+            <span class="badge-label">Active Model:</span>
+            <span class="badge-val" id="model-name-display">batiai/gemma4-e2b:q4</span>
+          </div>
+        </div>
+        <div class="header-right">
+          <div class="pill-badge pill-neutral">
+            <span class="pulse-indicator"></span>
+            Ollama Local Engine
+          </div>
+        </div>
+      </header>
+
+      <!-- Message Container -->
+      <div class="messages-container" id="messages-container">
+        <!-- Welcome / Empty State Card -->
+        <div class="welcome-hero" id="welcome-hero">
+          <div class="hero-icon">🧪</div>
+          <h1>Gemma4 Single-Shot Evaluation</h1>
+          <p class="hero-description">
+            This interface tests <strong>batiai/gemma4-e2b:q4</strong> in a pure single-shot environment.
+            External tools, web browsing, and RAG databases are completely disabled to measure the model's raw pre-trained comprehension of scientific workflows.
+          </p>
+          <div class="domain-grid">
+            <div class="domain-card" data-prompt-id="dft_cutoff">
+              <span class="domain-badge dft">DFT</span>
+              <h4>Quantum ESPRESSO</h4>
+              <p>Test convergence parameters, k-points, and PAW/ONCV pseudos for Pt.</p>
+            </div>
+            <div class="domain-card" data-prompt-id="md_chaining">
+              <span class="domain-badge md">MD</span>
+              <h4>LAMMPS DeePMD</h4>
+              <p>Evaluate production NVT input syntax and restart chaining logic.</p>
+            </div>
+            <div class="domain-card" data-prompt-id="training_format">
+              <span class="domain-badge train">Training</span>
+              <h4>DeePMD Data Sets</h4>
+              <p>Test raw format comprehension, test splits, and se_e2_a descriptors.</p>
+            </div>
+            <div class="domain-card" data-prompt-id="analysis_kinetics">
+              <span class="domain-badge ana">Analysis</span>
+              <h4>Surface Kinetics</h4>
+              <p>Evaluate IrO2 CUS site classification and survival probability P(t).</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Chat messages will render here -->
+        <div class="chat-thread" id="chat-thread"></div>
+      </div>
+
+      <!-- Input Bar -->
+      <footer class="chat-footer">
+        <form id="chat-form" class="chat-form">
+          <div class="input-container">
+            <textarea
+              id="prompt-input"
+              class="prompt-input"
+              rows="1"
+              placeholder="Ask Gemma4 a scientific computing question (e.g., Quantum ESPRESSO, LAMMPS, DeePMD)..."
+              required
+            ></textarea>
+            <div class="input-actions">
+              <span class="shortcut-hint">Enter to send • Shift+Enter for newline</span>
+              <button type="submit" id="send-btn" class="btn btn-send" aria-label="Send Message">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+              </button>
+            </div>
+          </div>
+        </form>
+      </footer>
+    </main>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
