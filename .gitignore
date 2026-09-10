@@ -1,0 +1,50 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Python Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+
+# Jupyter Notebook Checkpoints
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Local Databases and Vector Stores
+chroma_db/
+kuzu_db/
+chatbox.db
+chatbox.db-journal
+*.sqlite3
+
+# Large Simulation Trajectories & Output Files (>100MB, rejected by GitHub)
+*.extxyz
+*.dump
+*.dcd
+*.restart*
+*.npz
+*.npy
+*.out
+*.log
+*.sub.e*
+*.sub.o*
+
+# Large Model Binaries and Graphs (>100MB)
+*.pb
+set.*/
+
+# Temporary & Workspace Folders
+convergence_sweep/
+out/
+tmp/
+scratch/

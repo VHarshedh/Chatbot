@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+langgraph
+langchain
+langchain-community
+chromadb
+kuzu
+sqlite-vec
+ollama
+pandas
+numpy
+ase
