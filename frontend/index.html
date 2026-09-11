@@ -1,16 +1,20 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Scientific Computing AI — Gemma4 Zero-Shot Evaluation</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@500;600;700&display=swap" rel="stylesheet">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@500;600;700&display=swap"
+    rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css">
   <!-- KaTeX for Scientific Math Formula Rendering -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous">
 </head>
+
 <body>
   <div class="app-layout">
     <!-- Sidebar -->
@@ -20,11 +24,14 @@
           <div class="brand-icon">⚛</div>
           <div class="brand-text">
             <h2>SciCompute AI</h2>
-            <span class="subtext">Materials & Chemistry</span>
+            <span class="subtext">Agentic RAG based system</span>
           </div>
         </div>
         <button id="new-session-btn" class="btn btn-primary btn-new-session" title="Start a fresh chat session">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
           New Session
         </button>
       </div>
@@ -32,7 +39,9 @@
       <!-- Domain Benchmark Presets -->
       <div class="sidebar-section">
         <h3 class="section-title">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+          </svg>
           Benchmark Prompts
         </h3>
         <div class="benchmark-list" id="benchmark-list">
@@ -43,7 +52,9 @@
       <!-- Past Evaluation Benchmarks -->
       <div class="sidebar-section">
         <h3 class="section-title">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20V10M18 20V4M6 20v-4"/></svg>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 20V10M18 20V4M6 20v-4" />
+          </svg>
           Accuracy Benchmarks
         </h3>
         <div class="eval-history-list" id="eval-history-list">
@@ -54,7 +65,10 @@
       <!-- Session History -->
       <div class="sidebar-section flex-grow">
         <h3 class="section-title">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <polyline points="12 6 12 12 16 14"></polyline>
+          </svg>
           Chat History
         </h3>
         <div class="session-list" id="session-list">
@@ -80,7 +94,11 @@
       <header class="chat-header">
         <div class="header-left">
           <button id="toggle-sidebar-btn" class="icon-btn mobile-only" aria-label="Toggle Menu">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="3" y1="12" x2="21" y2="12"></line>
+              <line x1="3" y1="6" x2="21" y2="6"></line>
+              <line x1="3" y1="18" x2="21" y2="18"></line>
+            </svg>
           </button>
           <div class="model-badge">
             <span class="badge-label">Model:</span>
@@ -90,14 +108,16 @@
 
         <!-- Mode Switcher Buttons in Top Bar -->
         <div class="mode-switch-container" id="mode-switch-container" role="tablist" aria-label="Engine Execution Mode">
-          <button type="button" class="mode-toggle-btn active" id="btn-mode-zero-shot" data-mode="zero_shot" title="Zero-Shot Baseline: Direct model generation with zero tools and zero RAG">
+          <button type="button" class="mode-toggle-btn active" id="btn-mode-zero-shot" data-mode="zero_shot"
+            title="Zero-Shot Baseline: Direct model generation with zero tools and zero RAG">
             <span class="mode-icon">⚡</span>
             <span class="mode-text">
               <span class="mode-main-title">Zero-Shot Model</span>
               <span class="mode-sub-title">Isolated Baseline</span>
             </span>
           </button>
-          <button type="button" class="mode-toggle-btn" id="btn-mode-agentic-rag" data-mode="agentic" title="Agentic RAG: Full access to ChromaDB/Kùzu Knowledge Graph, Docker Sandbox, and Web Search">
+          <button type="button" class="mode-toggle-btn" id="btn-mode-agentic-rag" data-mode="agentic"
+            title="Agentic RAG: Full access to ChromaDB/Kùzu Knowledge Graph, Docker Sandbox, and Web Search">
             <span class="mode-icon">🧠</span>
             <span class="mode-text">
               <span class="mode-main-title">Agentic RAG</span>
@@ -121,7 +141,9 @@
           <div class="hero-icon">🧪</div>
           <h1>Gemma4 Zero-Shot Evaluation</h1>
           <p class="hero-description">
-            Benchmark <strong>batiai/gemma4-e2b:q4</strong> in a pure zero-shot setting. Tools and RAG databases are completely isolated to measure the model's raw pre-trained comprehension of computational chemistry workflows.
+            Benchmark <strong>batiai/gemma4-e2b:q4</strong> in a pure zero-shot setting. Tools and RAG databases are
+            completely isolated to measure the model's raw pre-trained comprehension of computational chemistry
+            workflows.
           </p>
 
           <!-- Flagship Benchmark Action Banner -->
@@ -129,10 +151,14 @@
             <div class="eval-banner-content">
               <div class="eval-pill">🎯 Flagship Accuracy Benchmark</div>
               <h3>Interfacial Water Analysis Script Generator</h3>
-              <p>Prompts Gemma4 to write the complete Python script (density profiles, RDFs, surface hydroxyl fractions, survival probabilities $P(t)$, DP model averaging, 2×2 plots, and text report) and automatically measures its accuracy against the 100-point ground truth standard.</p>
+              <p>Prompts Gemma4 to write the complete Python script (density profiles, RDFs, surface hydroxyl fractions,
+                survival probabilities $P(t)$, DP model averaging, 2×2 plots, and text report) and automatically
+                measures its accuracy against the 100-point ground truth standard.</p>
             </div>
             <button id="run-flagship-eval-btn" class="btn btn-eval">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <polygon points="5 3 19 12 5 21 5 3"></polygon>
+              </svg>
               Run Script Evaluation
             </button>
           </div>
@@ -169,17 +195,16 @@
       <footer class="chat-footer">
         <form id="chat-form" class="chat-form">
           <div class="input-container">
-            <textarea
-              id="prompt-input"
-              class="prompt-input"
-              rows="1"
+            <textarea id="prompt-input" class="prompt-input" rows="1"
               placeholder="Ask Gemma4 a scientific computing question or request a simulation script..."
-              required
-            ></textarea>
+              required></textarea>
             <div class="input-actions">
               <span class="shortcut-hint">Enter to send • Shift+Enter for newline</span>
               <button type="submit" id="send-btn" class="btn btn-send" aria-label="Send Message">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <line x1="22" y1="2" x2="11" y2="13"></line>
+                  <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                </svg>
               </button>
             </div>
           </div>
@@ -192,4 +217,5 @@
   <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>
   <script src="/static/app.js"></script>
 </body>
+
 </html>

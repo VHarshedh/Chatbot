@@ -108,15 +108,33 @@ This repository provides a unified software stack:
 - **Responsive Styling**: Display formulas feature centered dark cards with horizontal scroll capability for lengthy formulas and automatic DOM hydration.
 
 ### 4. Zero-Shot Interfacial Script Evaluation (100-Point Rubric)
-- **Automated Rubric Evaluator (`backend/evaluation/script_evaluator.py`)**: Measures zero-shot script accuracy against a 100-point rubric with automated AST syntax validation:
-  1. **Syntax & AST Validity (15 pts)**: Parses code using Python's `ast` module; checks for `NameError`, indentation errors, or unclosed brackets.
-  2. **Library Imports (15 pts)**: Verifies presence of `ase` (or `ase.io`), `numpy`, `matplotlib.pyplot`, and `scipy`.
-  3. **Interfacial Structural Classification (25 pts)**: Validates identification of surface metal atoms ($M_{\text{sur}}$), bulk vs water oxygens ($O_{\text{bulk}}, O_w$), coordinatively unsaturated sites (CUS), and bridge oxygens ($O_{\text{br}}$).
-  4. **Analytical Physics & Kinetics (25 pts)**: Scores water mass density profile along the z-axis, pair radial distribution functions (RDF), residence/survival probability $P(t)$, and hydroxyl fraction calculation.
-  5. **Multi-Model DP Averaging (10 pts)**: Verifies loops across DeePMD potential ensemble directories and standard deviation / error band calculation.
-  6. **Artifact Generation & Reporting (10 pts)**: Checks for individual metric plots, combined 2×2 summary figure (`plt.subplots(2, 2)`), and quantitative summary report printout.
+- **Automated Rubric Evaluator (`backend/evaluation/script_evaluator.py`)**: Directly benchmarks generated zero-shot analysis code against the complete workflow in `Analysis/Water_Density_RDF_Survival_Probability_Hydroxyl_Fraction_with_IrO2_Template_Seperate_Plot_Capability.ipynb` across 5 scientific categories (100 points total):
+  1. **Syntax & Core Imports (15 pts)**: Parses code using Python's `ast` module (5 pts); validates imports for Atomic Simulation Environment (`ase`, `from ase import io`, `Atoms`, `neighbor_list`) (4 pts), `numpy` (3 pts), and `matplotlib.pyplot` (3 pts) (*Notebook Cell 00*).
+  2. **Interfacial Site Identification (20 pts)**:
+     - Detects topmost surface metal atoms using $z$-coordinate filtering $z \ge \max(m_z) - 1.5$ Å (5 pts) (*Notebook Cell 02 line 56, Cell 05 line 52*).
+     - Separates bulk oxide oxygen from water oxygen using oxide stoichiometry $s \times N_{\text{metal}}$ ($s=2$ for $\text{IrO}_2$) (5 pts) (*Notebook Cell 02 line 59*).
+     - Identifies Coordinatively Unsaturated Sites (CUS) (5 pts) (*Notebook Cell 02 line 78*).
+     - Identifies adsorbed oxygen ($O_{\text{adb}}$) via coordination distance cutoff $\le 2.5$ Å and surface lattice bridge oxygens ($O_{\text{br}}$ / $O_{\text{sur}}$) (5 pts) (*Notebook Cell 02 lines 80–94, Cell 05 lines 58–66*).
+  3. **Density Profiles & Pair RDFs (20 pts)**:
+     - Water mass density profile along the $z$-axis with physical conversion formula using water molar mass $18.01528$ g/mol and Avogadro's constant $6.023 \times 10^{23}$ (10 pts) (*Notebook Cell 02 lines 95–129*).
+     - Pair Radial Distribution Functions (RDF / $g(r)$) for the 3 key interfacial pairs: $M_{\text{cus}}-O_w$, $O_{\text{br}}-H_w$, and $O_{\text{br}}-O_w$ using atom type masking (`Si`, `S`, `W`) and `rpdf` (10 pts) (*Notebook Cell 02 lines 130–148*).
+  4. **Surface Kinetics & Continuous Survival Probability (25 pts)**:
+     - Surface hydroxylation tracking using neighbor lists with a $1.2$ Å cutoff for O-H bonds, classifying 1 H = Dissociated (OH/OD) and 2 H = Molecular (H2O/D2O), and tracking instantaneous dissociation fractions (12 pts) (*Notebook Cell 05 lines 67–88*).
+     - Continuous survival probability $P(t)$ tracking across time lag $\tau$ via multi-frame set intersections `set.intersection(*oh_sets[j:j+tau+1])` and residence time $\tau$ via trapezoidal numerical integration $\tau = \frac{\int t P(t) dt}{\int P(t) dt}$ (`np.trapezoid` / `np.trapz`) (13 pts) (*Notebook Cell 05 lines 89–110, Cell 06 lines 14–28*).
+  5. **Model Averaging & Artifact Outputs (20 pts)**:
+     - Multi-model ensemble loop across Deep Potential models (`range(1, dp + 1)`) computing cross-model mean $\pm$ standard deviation (5 pts) (*Notebook Cell 02 line 102, Cell 05 line 20*).
+     - Intermediate `.npz` storage matching `simulation_results.npz` and `survival_fraction_results.npz` (5 pts) (*Notebook Cell 02 line 162, Cell 05 line 117*).
+     - Combined 2×2 presentation figure layout with shaded uncertainty bands (`fill_between`) saved as `full_analysis_presentation.png` (5 pts) (*Notebook Cell 07 lines 25–95*).
+     - Summary text report output (`summary_report.txt`) recording final surface speciation percentages and residence times (5 pts) (*Notebook Cell 07 lines 115–125*).
+- **Ground-Truth Metric Comparison (with $\pm 5\%$ Tolerance)**:
+  Compares candidate numerical metrics against reference values extracted directly from the notebook outputs:
+  - $\tau_{\text{OD}}$ Residence Time: **$0.298 \pm 0.114$ ns**
+  - $\tau_{\text{D}_2\text{O}}$ Residence Time: **$0.043 \pm 0.028$ ns**
+  - Dissociated Fraction (OD): **$77.44\% \pm 6.48\%$**
+  - Molecular Fraction ($\text{D}_2\text{O}$): **$22.56\% \pm 6.48\%$**
+  - Automatically flags compliance based on $\le 5\%$ relative error.
 - **Letter Grades**: **A** (≥90%), **B** (≥80%), **C** (≥70%), **D** (≥60%), **F** (<60%).
-- **Interactive Evaluation Card**: Displays radar category scores, passed/failed checklist badges, and latency benchmarks directly in the UI.
+- **Interactive Evaluation Card**: Displays radar category scores, passed/failed checklist badges, notebook feature detections, metric comparison table, and latency benchmarks directly in the UI.
 
 ### 5. Hybrid RAG (ChromaDB + Kùzu Knowledge Graph)
 - **Vector Search (`backend/rag/vectorstore.py`)**: Chunks and embeds all workspace markdown manuals and Python scripts using Ollama (`nomic-embed-text`) stored in a persistent ChromaDB collection.
@@ -455,6 +473,7 @@ All settings can be customized via environment variables or in [backend/config.p
 |---|---|---|
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Endpoint for the local Ollama daemon |
 | `MODEL_NAME` | `batiai/gemma4-e2b:q4` | LLM model used for agents and code generation |
+| `NUM_GPU` | `-1` | GPU layer offloading count (`-1` = all layers to GPU, `0` = force CPU) |
 | `EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model used for ChromaDB semantic search |
 | `CHROMA_PERSIST_DIR` | `chroma_db` | Storage path for persistent vector embeddings |
 | `KUZU_DB_DIR` | `kuzu_db` | Storage path for Kùzu embedded graph database |
@@ -464,31 +483,47 @@ All settings can be customized via environment variables or in [backend/config.p
 | `HPC_KEY_PATH` | `~/.ssh/id_rsa` | Private SSH key path for cluster authentication |
 | `WORKSPACE_ROOT` | `ChatBot/` (computed) | Root directory used for document indexing |
 
-To override settings, set environment variables prior to running:
-```powershell
-$env:MODEL_NAME="llama3.1:8b"
-$env:HPC_HOST="hpc.university.edu"
-$env:HPC_USER="username"
-```
+### Hardware Acceleration (GPU vs CPU)
+
+1. **Ollama GPU Acceleration (Default)**:
+   - By default, `NUM_GPU: -1` requests Ollama to offload all model layers to available GPUs (NVIDIA CUDA, AMD ROCm/Vulkan, or Apple Metal).
+   - **Integrated AMD Radeon / Intel Graphics on Windows**: Ollama drops integrated GPUs by default. To enable your AMD Radeon graphics card via Vulkan, set the environment variable:
+     ```powershell
+     # In PowerShell:
+     $env:OLLAMA_IGPU_ENABLE = "1"
+     ollama serve
+     ```
+     Or add `OLLAMA_IGPU_ENABLE=1` to Windows System/User Environment Variables and restart Ollama from the system tray.
+
+2. **Forcing CPU Mode**:
+   - To force CPU-only inference:
+     ```powershell
+     $env:NUM_GPU = "0"
+     uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+     ```
+
+3. **DeePMD-kit Model Training (`Training/DP_Models`)**:
+   - DeePMD potential training (`dp train input.json`) relies on custom C++/CUDA/ROCm atomic kernels requiring dedicated data center GPUs and multiple gigabytes of VRAM.
+   - For DeePMD training, use the pre-configured SLURM GPU submission scripts (`train.sub`) on an HPC cluster (`#SBATCH --gres=gpu:1`) or run on Google Colab with CUDA.
 
 ---
 
 ## Testing & Quality Assurance
 
-The codebase includes comprehensive unit and integration tests with strict coverage thresholds configured in `pytest.ini`:
+The codebase includes a comprehensive test suite with strict coverage thresholds configured in `pytest.ini`:
 
 ```bash
-# Run all unit tests with coverage reporting (33/33 tests passing, 95.79% coverage)
-pytest backend/tests
+# Run all unit tests with coverage reporting (123/123 tests passing, >=95% coverage)
+pytest backend/tests --ignore=backend/tests/integration/test_live.py
 
-# Run core evaluation and agent test files
-pytest backend/tests/test_script_evaluator.py backend/tests/test_api.py backend/tests/test_baseline_agent.py backend/tests/test_database.py -v
+# Run evaluation rubric and metric comparison tests specifically
+pytest backend/tests/test_script_evaluator.py -v
 
 # Run live integration tests (requires Docker and Ollama to be running)
 pytest -m "" backend/tests/integration/test_live.py
 ```
 
-*Note:* `pytest.ini` enforces `--cov=backend --cov-report=term-missing --cov-fail-under=95`. Current coverage stands at **95.79%**, exceeding the strict 95% threshold across all agent, evaluation, database, and API modules.
+*Note:* `pytest.ini` enforces `--cov=backend --cov-report=term-missing --cov-fail-under=95`. Current test suite includes **123 passing tests**, covering all agent, evaluation, database, tools, and API modules. Context window is tuned to **8192 (`NUM_CTX=8192`)** for fast, high-throughput GPU inference on mobile AMD Radeon graphics.
 
 ---
 

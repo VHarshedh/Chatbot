@@ -44,7 +44,7 @@ class AgenticRAGAgent:
             "messages": messages,
             "stream": stream,
             "options": {
-                "num_ctx": 32768,
+                "num_ctx": settings.NUM_CTX,
                 "num_predict": -1,
                 "temperature": 0.2,
                 "num_gpu": settings.NUM_GPU
@@ -109,6 +109,10 @@ class AgenticRAGAgent:
         artifacts = []
         code_extracted = ""
 
+        thinking_parts = []
+        content_parts = []
+        eval_count = 0
+
         if execution_requested:
             cg_start = {"type": "agent_step", "step": "code_gen_start", "title": "Script Synthesis", "status": "running", "details": "Synthesizing Python analysis script using grounded RAG domain facts..."}
             trace_steps.append(cg_start)
@@ -130,9 +134,53 @@ CRITICAL IMPLEMENTATION REQUIREMENTS:
 4. Output ONLY valid executable Python code in a ```python ... ``` block. Use ASE, NumPy, and Matplotlib."""
 
             try:
-                res = self._call_llm(code_prompt, timeout=3600)
-                res_data = res.json()
-                code_response = res_data.get("message", {}).get("content", "")
+                code_response_parts = []
+                res = self._call_llm(code_prompt, stream=True, timeout=3600)
+                if hasattr(res, "raise_for_status"):
+                    res.raise_for_status()
+
+                if hasattr(res, "iter_lines"):
+                    try:
+                        for line in res.iter_lines():
+                            if not line:
+                                continue
+                            try:
+                                chunk = json.loads(line.decode("utf-8") if isinstance(line, bytes) else line)
+                            except Exception:
+                                continue
+
+                            msg = chunk.get("message", {})
+                            thinking_delta = msg.get("thinking", "")
+                            content_delta = msg.get("content", "")
+
+                            if thinking_delta:
+                                thinking_parts.append(thinking_delta)
+                                yield f"data: {json.dumps({'type': 'thinking', 'delta': thinking_delta})}\n\n"
+
+                            if content_delta:
+                                code_response_parts.append(content_delta)
+                                content_parts.append(content_delta)
+                                yield f"data: {json.dumps({'type': 'content', 'delta': content_delta})}\n\n"
+                    except Exception:
+                        pass
+
+                # Fallback for non-streaming mocked responses in tests
+                if not code_response_parts and hasattr(res, "json"):
+                    try:
+                        res_data = res.json()
+                        msg = res_data.get("message", {})
+                        if msg.get("thinking"):
+                            thinking_parts.append(msg["thinking"])
+                            yield f"data: {json.dumps({'type': 'thinking', 'delta': msg['thinking']})}\n\n"
+                        code_content = msg.get("content", "")
+                        if code_content:
+                            code_response_parts.append(code_content)
+                            content_parts.append(code_content)
+                            yield f"data: {json.dumps({'type': 'content', 'delta': code_content})}\n\n"
+                    except Exception:
+                        pass
+
+                code_response = "".join(code_response_parts).strip()
                 
                 # Extract code block
                 code_match = re.search(r"```(?:python)?\s*([\s\S]*?)```", code_response)
@@ -222,9 +270,10 @@ User Query:
 
 Provide a well-structured response with clear headings, KaTeX LaTeX math formulas ($...$ for inline, $$...$$ for display blocks), and code blocks using `ase.neighborlist` where appropriate."""
 
-        thinking_parts = []
-        content_parts = []
-        eval_count = 0
+        if code_extracted and content_parts:
+            divider = "\n\n---\n\n### Scientific Synthesis & Findings\n\n"
+            content_parts.append(divider)
+            yield f"data: {json.dumps({'type': 'content', 'delta': divider})}\n\n"
 
         try:
             default_sys = (

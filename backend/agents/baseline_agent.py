@@ -40,7 +40,7 @@ class SingleShotAgent:
             "messages": messages,
             "stream": True,
             "options": {
-                "num_ctx": 32768,
+                "num_ctx": settings.NUM_CTX,
                 "num_predict": -1,
                 "temperature": 0.2,
                 "num_gpu": settings.NUM_GPU
@@ -198,7 +198,7 @@ class SingleShotAgent:
             "messages": messages,
             "stream": True,
             "options": {
-                "num_ctx": 32768,
+                "num_ctx": settings.NUM_CTX,
                 "num_predict": -1,
                 "temperature": 0.2,
                 "num_gpu": settings.NUM_GPU

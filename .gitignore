@@ -28,6 +28,8 @@ kuzu_db/
 chatbox.db
 chatbox.db-journal
 *.sqlite3
+kuzu_db.wal
+kuzu_db
 
 # Large Simulation Trajectories & Output Files (>100MB, rejected by GitHub)
 *.extxyz

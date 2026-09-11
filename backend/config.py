@@ -17,4 +17,8 @@ class Settings(BaseSettings):
     # 0 = CPU-only mode. Override with NUM_GPU=0 environment variable to force CPU.
     NUM_GPU: int = -1
 
+    # Context window size: 8192 tokens optimal for AMD Radeon iGPU / mobile unified memory.
+    # Override with NUM_CTX environment variable if needed.
+    NUM_CTX: int = 8192
+
 settings = Settings()

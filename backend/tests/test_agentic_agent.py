@@ -181,6 +181,7 @@ def test_chat_stream_llm_stream_error(mocker):
     assert "Ollama network failure" in err_event["error"]
 
 def test_chat_sync_success(mocker):
+    mocker.patch("backend.agents.agentic_agent.HybridRetriever")
     agent = AgenticRAGAgent()
     
     mock_events = [
@@ -199,6 +200,7 @@ def test_chat_sync_success(mocker):
     assert "<details" in result["response"]
 
 def test_call_llm_direct(mocker):
+    mocker.patch("backend.agents.agentic_agent.HybridRetriever")
     mock_post = mocker.patch("requests.post")
     agent = AgenticRAGAgent()
     agent._call_llm("Calculate RDF", system_prompt="You are an expert", stream=True, timeout=90)
@@ -210,6 +212,7 @@ def test_call_llm_direct(mocker):
     assert kwargs["json"]["messages"][1]["role"] == "user"
 
 def test_call_llm_direct_no_system(mocker):
+    mocker.patch("backend.agents.agentic_agent.HybridRetriever")
     mock_post = mocker.patch("requests.post")
     agent = AgenticRAGAgent()
     agent._call_llm("Calculate RDF", stream=False)
@@ -255,6 +258,7 @@ def test_chat_stream_empty_completion(mocker):
     assert done_event["full_response"] == "Analysis completed."
 
 def test_chat_sync_fallbacks(mocker):
+    mocker.patch("backend.agents.agentic_agent.HybridRetriever")
     agent = AgenticRAGAgent()
     
     mock_events = [
@@ -267,4 +271,49 @@ def test_chat_sync_fallbacks(mocker):
     result = agent.chat("Test sync fallback")
     assert result["status"] == "success"
     assert result["response"] == "Fallback content"
+
+def test_chat_stream_step_2_streaming(mocker):
+    mocker.patch("backend.agents.agentic_agent.HybridRetriever")
+    mocker.patch("backend.agents.agentic_agent.insert_session", return_value=53)
+    mocker.patch("backend.agents.agentic_agent.insert_message")
+
+    # Mock Step 2 streaming code generation with thinking and code chunks
+    mock_step2_res = MagicMock()
+    mock_step2_res.iter_lines.return_value = [
+        json.dumps({"message": {"thinking": "Synthesizing Python RDF script..."}}).encode("utf-8"),
+        json.dumps({"message": {"content": "```python\nimport ase\n"}}).encode("utf-8"),
+        json.dumps({"message": {"content": "print('RDF calculated')\n```"}}).encode("utf-8"),
+    ]
+
+    # Mock Step 3 streaming synthesis
+    mock_step3_res = MagicMock()
+    mock_step3_res.iter_lines.return_value = [
+        json.dumps({"message": {"content": "Final synthesis analysis."}}).encode("utf-8"),
+    ]
+
+    mocker.patch.object(AgenticRAGAgent, "_call_llm", side_effect=[mock_step2_res, mock_step3_res])
+    mocker.patch("backend.agents.agentic_agent.run_python_in_sandbox", return_value={
+        "exit_code": 0,
+        "stdout": "RDF calculated",
+        "stderr": "",
+        "artifacts": []
+    })
+
+    agent = AgenticRAGAgent()
+    events = list(agent.chat_stream("Run python script to calculate RDF"))
+    parsed = [json.loads(e.replace("data: ", "").strip()) for e in events if e.strip()]
+
+    # Verify that thinking and content events from Step 2 were emitted before sandbox_start
+    types = [p["type"] for p in parsed]
+    assert "thinking" in types
+    assert "content" in types
+
+    # Verify thinking delta from Step 2 was yielded
+    thinking_deltas = [p["delta"] for p in parsed if p.get("type") == "thinking"]
+    assert any("Synthesizing Python RDF script..." in d for d in thinking_deltas)
+
+    # Verify code chunks from Step 2 were yielded as content events
+    content_deltas = [p["delta"] for p in parsed if p.get("type") == "content"]
+    assert any("import ase" in c for c in content_deltas)
+
 

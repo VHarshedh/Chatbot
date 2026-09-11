@@ -105,7 +105,8 @@ const CATEGORY_META = {
 document.addEventListener("DOMContentLoaded", async () => {
   setupTextareaAutoGrow();
   setupEventListeners();
-  setEngineMode(currentEngineMode);
+  const savedMode = localStorage.getItem("scicompute_engine_mode");
+  setEngineMode(savedMode || currentEngineMode, false);
   await loadModelInfo();
   await loadBenchmarkPrompts();
   await loadEvaluationHistory();

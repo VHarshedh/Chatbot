@@ -314,7 +314,7 @@ def list_sessions():
     rows = execute_query(
         """
         SELECT s.id, s.title, s.created_at, s.last_message_at,
-               (SELECT m.agent_used FROM messages m WHERE m.session_id = s.id AND m.role = 'assistant' ORDER BY m.id DESC LIMIT 1) as last_agent_used
+               (SELECT m.agent_used FROM messages m WHERE m.session_id = s.id AND m.agent_used IS NOT NULL ORDER BY m.id DESC LIMIT 1) as last_agent_used
         FROM sessions s ORDER BY s.last_message_at DESC LIMIT 50
         """
     )
