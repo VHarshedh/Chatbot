@@ -1,10 +1,15 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Scientific Computing AI — Gemma4 Zero-Shot Evaluation</title>
+  <meta name="description" content="Scientific Computing AI — Agentic RAG chatbox for computational chemistry, DFT, molecular dynamics, and machine learning potentials. Powered by Gemma4 zero-shot evaluation.">
+  <meta name="theme-color" content="#0a0d14">
+  <meta property="og:title" content="SciCompute AI — Gemma4 Scientific Evaluation">
+  <meta property="og:description" content="Benchmark and evaluate AI-generated computational chemistry scripts with a 100-point scientific rubric.">
+  <title>SciCompute AI — Scientific Computing Assistant</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚛</text></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link
@@ -16,19 +21,22 @@
 </head>
 
 <body>
+  <!-- Toast Notification Container -->
+  <div class="toast-container" id="toast-container" aria-live="polite" aria-atomic="true"></div>
+
   <div class="app-layout">
     <!-- Sidebar -->
-    <aside class="sidebar" id="sidebar">
+    <aside class="sidebar" id="sidebar" role="complementary" aria-label="Navigation sidebar">
       <div class="sidebar-header">
         <div class="brand">
-          <div class="brand-icon">⚛</div>
+          <div class="brand-icon" aria-hidden="true">⚛</div>
           <div class="brand-text">
             <h2>SciCompute AI</h2>
-            <span class="subtext">Agentic RAG based system</span>
+            <span class="subtext">Agentic RAG System</span>
           </div>
         </div>
-        <button id="new-session-btn" class="btn btn-primary btn-new-session" title="Start a fresh chat session">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <button id="new-session-btn" class="btn btn-primary btn-new-session" title="Start a fresh chat session (Ctrl+N)" aria-label="Start new chat session">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
             <line x1="12" y1="5" x2="12" y2="19"></line>
             <line x1="5" y1="12" x2="19" y2="12"></line>
           </svg>
@@ -39,12 +47,12 @@
       <!-- Domain Benchmark Presets -->
       <div class="sidebar-section">
         <h3 class="section-title">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
             <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
           </svg>
           Benchmark Prompts
         </h3>
-        <div class="benchmark-list" id="benchmark-list">
+        <div class="benchmark-list" id="benchmark-list" role="list">
           <!-- Dynamically populated from /api/benchmark_prompts -->
         </div>
       </div>
@@ -52,12 +60,12 @@
       <!-- Past Evaluation Benchmarks -->
       <div class="sidebar-section">
         <h3 class="section-title">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
             <path d="M12 20V10M18 20V4M6 20v-4" />
           </svg>
           Accuracy Benchmarks
         </h3>
-        <div class="eval-history-list" id="eval-history-list">
+        <div class="eval-history-list" id="eval-history-list" role="list">
           <!-- Dynamically populated from /api/evaluations -->
         </div>
       </div>
@@ -65,13 +73,13 @@
       <!-- Session History -->
       <div class="sidebar-section flex-grow">
         <h3 class="section-title">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
             <circle cx="12" cy="12" r="10"></circle>
             <polyline points="12 6 12 12 16 14"></polyline>
           </svg>
           Chat History
         </h3>
-        <div class="session-list" id="session-list">
+        <div class="session-list" id="session-list" role="list">
           <!-- Dynamically populated -->
         </div>
       </div>
@@ -79,7 +87,7 @@
       <!-- Status Footer -->
       <div class="sidebar-footer">
         <div class="mode-badge" id="sidebar-mode-badge">
-          <span class="status-dot active" id="sidebar-status-dot"></span>
+          <span class="status-dot active" id="sidebar-status-dot" aria-hidden="true"></span>
           <div class="mode-info">
             <span class="mode-label" id="sidebar-mode-label">Zero-Shot Baseline</span>
             <span class="mode-desc" id="sidebar-mode-desc">No Tools • No RAG</span>
@@ -89,48 +97,58 @@
     </aside>
 
     <!-- Main Chat Workspace -->
-    <main class="chat-main">
+    <main class="chat-main" role="main">
       <!-- Top Navigation Bar with Mode Switcher -->
       <header class="chat-header">
         <div class="header-left">
-          <button id="toggle-sidebar-btn" class="icon-btn mobile-only" aria-label="Toggle Menu">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <button id="toggle-sidebar-btn" class="icon-btn mobile-only" aria-label="Toggle navigation menu">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
               <line x1="3" y1="12" x2="21" y2="12"></line>
               <line x1="3" y1="6" x2="21" y2="6"></line>
               <line x1="3" y1="18" x2="21" y2="18"></line>
             </svg>
           </button>
-          <div class="model-badge">
-            <span class="badge-label">Model:</span>
+          <div class="model-badge" title="Active Model Architecture">
+            <span class="model-badge-icon" aria-hidden="true">⚛</span>
+            <span class="badge-label">Model</span>
             <span class="badge-val" id="model-name-display">batiai/gemma4-e2b:q4</span>
+          </div>
+          <!-- Connection Status -->
+          <div class="connection-badge" id="connection-badge" title="API connection status">
+            <span class="connection-dot" id="connection-dot"></span>
+            <span class="connection-text" id="connection-text">Connecting...</span>
           </div>
         </div>
 
         <!-- Mode Switcher Buttons in Top Bar -->
         <div class="mode-switch-container" id="mode-switch-container" role="tablist" aria-label="Engine Execution Mode">
           <button type="button" class="mode-toggle-btn active" id="btn-mode-zero-shot" data-mode="zero_shot"
-            title="Zero-Shot Baseline: Direct model generation with zero tools and zero RAG">
-            <span class="mode-icon">⚡</span>
-            <span class="mode-text">
-              <span class="mode-main-title">Zero-Shot Model</span>
-              <span class="mode-sub-title">Isolated Baseline</span>
-            </span>
+            title="Zero-Shot Baseline: Direct model generation with zero tools and zero RAG" role="tab" aria-selected="true">
+            <span class="mode-icon" aria-hidden="true">⚡</span>
+            <span class="mode-title">Zero-Shot</span>
+            <span class="mode-pill-tag">Baseline</span>
           </button>
           <button type="button" class="mode-toggle-btn" id="btn-mode-agentic-rag" data-mode="agentic"
-            title="Agentic RAG: Full access to ChromaDB/Kùzu Knowledge Graph, Docker Sandbox, and Web Search">
-            <span class="mode-icon">🧠</span>
-            <span class="mode-text">
-              <span class="mode-main-title">Agentic RAG</span>
-              <span class="mode-sub-title">RAG • Sandbox • Web</span>
-            </span>
+            title="Agentic RAG: Full access to ChromaDB/Kùzu Knowledge Graph, Docker Sandbox, and Web Search" role="tab" aria-selected="false">
+            <span class="mode-icon" aria-hidden="true">🧠</span>
+            <span class="mode-title">Agentic RAG</span>
+            <span class="mode-pill-tag">Tools</span>
           </button>
         </div>
 
         <div class="header-right">
-          <div class="pill-badge pill-neutral" id="engine-status-pill">
-            <span class="pulse-indicator"></span>
-            <span id="engine-status-text">⚡ Zero-Shot Mode (No Tools)</span>
+          <div class="pill-badge pill-zero-shot" id="engine-status-pill" title="Engine Execution Status">
+            <span class="pulse-indicator" aria-hidden="true"></span>
+            <span id="engine-status-text">⚡ Zero-Shot Mode (No Tools • No RAG)</span>
           </div>
+          <div class="header-divider" aria-hidden="true"></div>
+          <!-- Settings / System Panel Button -->
+          <button id="settings-toggle-btn" class="icon-btn settings-btn" aria-label="Open System Settings & Appearance" title="Settings & System Configuration" aria-expanded="false" aria-controls="settings-drawer">
+            <svg class="settings-gear-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+            </svg>
+          </button>
         </div>
       </header>
 
@@ -138,13 +156,50 @@
       <div class="messages-container" id="messages-container">
         <!-- Welcome / Evaluation Hero Card -->
         <div class="welcome-hero" id="welcome-hero">
-          <div class="hero-icon">🧪</div>
-          <h1>Gemma4 Zero-Shot Evaluation</h1>
+          <div class="hero-icon" aria-hidden="true">🧪</div>
+          <h1>Scientific Computing AI</h1>
           <p class="hero-description">
-            Benchmark <strong>batiai/gemma4-e2b:q4</strong> in a pure zero-shot setting. Tools and RAG databases are
-            completely isolated to measure the model's raw pre-trained comprehension of computational chemistry
-            workflows.
+            Benchmark <strong>Gemma4</strong> in zero-shot and agentic RAG modes. Evaluate raw pre-trained
+            comprehension of computational chemistry workflows against a strict 100-point scientific rubric.
           </p>
+
+          <!-- How Scoring Works -->
+          <details class="scoring-explainer">
+            <summary>
+              <span>📊 How the 100-Point Scoring Works</span>
+              <span class="scoring-chevron">▾</span>
+            </summary>
+            <div class="scoring-content">
+              <div class="scoring-grid">
+                <div class="scoring-item">
+                  <div class="scoring-label">Syntax & Imports</div>
+                  <div class="scoring-bar"><div class="scoring-fill" style="width:15%"></div></div>
+                  <div class="scoring-pts">15 pts</div>
+                </div>
+                <div class="scoring-item">
+                  <div class="scoring-label">Site Identification</div>
+                  <div class="scoring-bar"><div class="scoring-fill" style="width:20%"></div></div>
+                  <div class="scoring-pts">20 pts</div>
+                </div>
+                <div class="scoring-item">
+                  <div class="scoring-label">Density & RDFs</div>
+                  <div class="scoring-bar"><div class="scoring-fill" style="width:20%"></div></div>
+                  <div class="scoring-pts">20 pts</div>
+                </div>
+                <div class="scoring-item">
+                  <div class="scoring-label">Kinetics & Survival</div>
+                  <div class="scoring-bar"><div class="scoring-fill" style="width:25%"></div></div>
+                  <div class="scoring-pts">25 pts</div>
+                </div>
+                <div class="scoring-item">
+                  <div class="scoring-label">Outputs & Artifacts</div>
+                  <div class="scoring-bar"><div class="scoring-fill" style="width:20%"></div></div>
+                  <div class="scoring-pts">20 pts</div>
+                </div>
+              </div>
+              <p class="scoring-note">Strict mode: Syntax errors cap at 35/100. Missing core imports cap at 50/100. Metric tolerance tightened to 3%.</p>
+            </div>
+          </details>
 
           <!-- Flagship Benchmark Action Banner -->
           <div class="evaluation-banner">
@@ -155,8 +210,8 @@
                 survival probabilities $P(t)$, DP model averaging, 2×2 plots, and text report) and automatically
                 measures its accuracy against the 100-point ground truth standard.</p>
             </div>
-            <button id="run-flagship-eval-btn" class="btn btn-eval">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <button id="run-flagship-eval-btn" class="btn btn-eval" aria-label="Run the flagship script evaluation benchmark">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
                 <polygon points="5 3 19 12 5 21 5 3"></polygon>
               </svg>
               Run Script Evaluation
@@ -164,22 +219,22 @@
           </div>
 
           <div class="domain-grid">
-            <div class="domain-card" data-prompt-id="dft_cutoff">
+            <div class="domain-card" data-prompt-id="dft_cutoff" role="button" tabindex="0" aria-label="Load DFT convergence benchmark">
               <span class="domain-badge dft">DFT</span>
               <h4>Quantum ESPRESSO</h4>
               <p>Test convergence parameters, k-points, and PAW/ONCV pseudos for Pt.</p>
             </div>
-            <div class="domain-card" data-prompt-id="md_chaining">
+            <div class="domain-card" data-prompt-id="md_chaining" role="button" tabindex="0" aria-label="Load molecular dynamics benchmark">
               <span class="domain-badge md">MD</span>
               <h4>LAMMPS DeePMD</h4>
               <p>Evaluate production NVT input syntax and restart chaining logic.</p>
             </div>
-            <div class="domain-card" data-prompt-id="training_format">
+            <div class="domain-card" data-prompt-id="training_format" role="button" tabindex="0" aria-label="Load training data benchmark">
               <span class="domain-badge train">Training</span>
               <h4>DeePMD Data Sets</h4>
               <p>Test raw format comprehension, test splits, and se_e2_a descriptors.</p>
             </div>
-            <div class="domain-card" data-prompt-id="analysis_kinetics">
+            <div class="domain-card" data-prompt-id="analysis_kinetics" role="button" tabindex="0" aria-label="Load interfacial analysis benchmark">
               <span class="domain-badge ana">Analysis</span>
               <h4>Surface Kinetics</h4>
               <p>Evaluate IrO2 CUS site classification and survival probability P(t).</p>
@@ -188,20 +243,20 @@
         </div>
 
         <!-- Chat messages & Evaluation reports will render here -->
-        <div class="chat-thread" id="chat-thread"></div>
+        <div class="chat-thread" id="chat-thread" role="log" aria-label="Chat messages"></div>
       </div>
 
       <!-- Input Bar -->
       <footer class="chat-footer">
-        <form id="chat-form" class="chat-form">
+        <form id="chat-form" class="chat-form" aria-label="Chat input form">
           <div class="input-container">
             <textarea id="prompt-input" class="prompt-input" rows="1"
-              placeholder="Ask Gemma4 a scientific computing question or request a simulation script..."
-              required></textarea>
+              placeholder="Ask a scientific computing question or request a simulation script..."
+              required aria-label="Type your message"></textarea>
             <div class="input-actions">
-              <span class="shortcut-hint">Enter to send • Shift+Enter for newline</span>
+              <span class="shortcut-hint">Enter to send · Shift+Enter for newline · <kbd>Ctrl+K</kbd> to focus</span>
               <button type="submit" id="send-btn" class="btn btn-send" aria-label="Send Message">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
                   <line x1="22" y1="2" x2="11" y2="13"></line>
                   <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
                 </svg>
@@ -212,6 +267,302 @@
       </footer>
     </main>
   </div>
+
+  <!-- Settings Drawer Backdrop & Sidebar Panel -->
+  <div class="drawer-backdrop" id="settings-drawer-backdrop" aria-hidden="true"></div>
+  <aside class="settings-drawer" id="settings-drawer" role="dialog" aria-labelledby="settings-drawer-title" aria-modal="true" aria-hidden="true">
+    <div class="settings-drawer-header">
+      <div class="settings-header-title-group">
+        <div class="settings-header-icon" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        </div>
+        <div>
+          <h2 id="settings-drawer-title" class="settings-drawer-title">System Settings</h2>
+          <span class="settings-drawer-subtitle">Configuration & Appearance</span>
+        </div>
+      </div>
+      <button id="close-settings-btn" class="icon-btn close-drawer-btn" aria-label="Close settings drawer" title="Close (Esc)">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    </div>
+
+    <div class="settings-drawer-body">
+      <!-- 1. UI Theme Selection (Three Options: Light, Dark, High Contrast) -->
+      <section class="settings-section">
+        <div class="settings-section-header">
+          <span class="settings-section-icon" aria-hidden="true">🎨</span>
+          <div>
+            <h3 class="settings-section-title">UI Theme Profile</h3>
+            <p class="settings-section-desc">Choose contrast profile and interface color scheme</p>
+          </div>
+        </div>
+
+        <div class="theme-options-grid" role="radiogroup" aria-label="UI Theme Selection">
+          <!-- Dark Theme Option -->
+          <button type="button" class="theme-option-card" data-theme-value="dark" role="radio" aria-checked="false" tabindex="0">
+            <div class="theme-preview theme-preview-dark" aria-hidden="true">
+              <div class="theme-preview-topbar">
+                <span class="preview-dot dot-red"></span>
+                <span class="preview-dot dot-yellow"></span>
+                <span class="preview-dot dot-green"></span>
+              </div>
+              <div class="theme-preview-content">
+                <div class="preview-pill dark-pill"></div>
+                <div class="preview-card dark-card">
+                  <div class="preview-bar preview-bar-accent"></div>
+                  <div class="preview-bar preview-bar-subtle"></div>
+                </div>
+              </div>
+            </div>
+            <div class="theme-option-info">
+              <div class="theme-option-header-row">
+                <span class="theme-option-name">🌙 Dark</span>
+                <span class="theme-option-badge">Default</span>
+                <span class="theme-check-mark" aria-hidden="true">✓</span>
+              </div>
+              <p class="theme-option-detail">Deep slate & obsidian with violet glow. Optimized for low-light research.</p>
+            </div>
+          </button>
+
+          <!-- Light Theme Option -->
+          <button type="button" class="theme-option-card" data-theme-value="light" role="radio" aria-checked="false" tabindex="0">
+            <div class="theme-preview theme-preview-light" aria-hidden="true">
+              <div class="theme-preview-topbar">
+                <span class="preview-dot dot-red"></span>
+                <span class="preview-dot dot-yellow"></span>
+                <span class="preview-dot dot-green"></span>
+              </div>
+              <div class="theme-preview-content">
+                <div class="preview-pill light-pill"></div>
+                <div class="preview-card light-card">
+                  <div class="preview-bar preview-bar-accent-light"></div>
+                  <div class="preview-bar preview-bar-subtle-light"></div>
+                </div>
+              </div>
+            </div>
+            <div class="theme-option-info">
+              <div class="theme-option-header-row">
+                <span class="theme-option-name">☀️ Light</span>
+                <span class="theme-option-badge">Daylight</span>
+                <span class="theme-check-mark" aria-hidden="true">✓</span>
+              </div>
+              <p class="theme-option-detail">Clean pearl-white canvas with dark slate text for bright ambient lighting.</p>
+            </div>
+          </button>
+
+          <!-- High Contrast Option -->
+          <button type="button" class="theme-option-card" data-theme-value="high-contrast" role="radio" aria-checked="false" tabindex="0">
+            <div class="theme-preview theme-preview-high-contrast" aria-hidden="true">
+              <div class="theme-preview-topbar">
+                <span class="preview-dot dot-white"></span>
+                <span class="preview-dot dot-white"></span>
+                <span class="preview-dot dot-white"></span>
+              </div>
+              <div class="theme-preview-content">
+                <div class="preview-pill hc-pill"></div>
+                <div class="preview-card hc-card">
+                  <div class="preview-bar preview-bar-cyan"></div>
+                  <div class="preview-bar preview-bar-white"></div>
+                </div>
+              </div>
+            </div>
+            <div class="theme-option-info">
+              <div class="theme-option-header-row">
+                <span class="theme-option-name">🔲 High Contrast</span>
+                <span class="theme-option-badge hc-badge">WCAG AAA</span>
+                <span class="theme-check-mark" aria-hidden="true">✓</span>
+              </div>
+              <p class="theme-option-detail">Pure OLED black, vivid cyan borders, and ultra-high luminance contrast.</p>
+            </div>
+          </button>
+        </div>
+      </section>
+
+      <!-- 2. Active Selection & Mode Explanation -->
+      <section class="settings-section">
+        <div class="settings-section-header">
+          <span class="settings-section-icon" aria-hidden="true">⚡</span>
+          <div>
+            <h3 class="settings-section-title">Active Selection & Mode</h3>
+            <p class="settings-section-desc">Detailed explanation of your active execution pipeline</p>
+          </div>
+        </div>
+
+        <div class="drawer-mode-card" id="drawer-mode-card">
+          <div class="drawer-mode-card-header">
+            <div class="drawer-mode-pill" id="drawer-mode-pill">
+              <span class="drawer-mode-dot"></span>
+              <span id="drawer-mode-pill-text">⚡ Zero-Shot Baseline</span>
+            </div>
+            <span class="drawer-mode-status-tag">Active State</span>
+          </div>
+
+          <p class="drawer-mode-explanation" id="drawer-mode-explanation">
+            <strong>Zero-Shot Baseline Mode</strong> executes direct prompt inference through <em>batiai/gemma4-e2b:q4</em> with zero external tool assistance and zero retrieval. This mode evaluates raw model comprehension, native computational chemistry syntax, and foundation weights without RAG augmentations.
+          </p>
+
+          <div class="drawer-mode-traits" id="drawer-mode-traits">
+            <div class="trait-item">
+              <span class="trait-icon">🔒</span>
+              <div class="trait-text">
+                <span class="trait-title">External Tools: Disabled</span>
+                <span class="trait-sub">No Python sandbox or shell subprocess execution</span>
+              </div>
+            </div>
+            <div class="trait-item">
+              <span class="trait-icon">📚</span>
+              <div class="trait-text">
+                <span class="trait-title">Knowledge Graph & RAG: Disabled</span>
+                <span class="trait-sub">No ChromaDB vectors or Kùzu graph lookups</span>
+              </div>
+            </div>
+            <div class="trait-item">
+              <span class="trait-icon">🎯</span>
+              <div class="trait-text">
+                <span class="trait-title">Evaluation Objective</span>
+                <span class="trait-sub">Measures raw parametric chemistry knowledge vs 100-pt rubric</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Quick Switcher Buttons in Drawer -->
+          <div class="drawer-mode-switch-row">
+            <span class="drawer-switch-label">Switch Pipeline:</span>
+            <div class="drawer-switch-btns">
+              <button type="button" class="drawer-switch-btn active" id="drawer-btn-zero-shot">
+                ⚡ Zero-Shot
+              </button>
+              <button type="button" class="drawer-switch-btn" id="drawer-btn-agentic">
+                🧠 Agentic RAG
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3. Model & Hardware Architecture -->
+      <section class="settings-section">
+        <div class="settings-section-header">
+          <span class="settings-section-icon" aria-hidden="true">⚛️</span>
+          <div>
+            <h3 class="settings-section-title">Model & Hardware Profile</h3>
+            <p class="settings-section-desc">Active LLM architecture and local compute runtime</p>
+          </div>
+        </div>
+
+        <div class="specs-card-grid">
+          <div class="spec-card">
+            <span class="spec-card-label">Active Model</span>
+            <span class="spec-card-val" id="drawer-model-name">batiai/gemma4-e2b:q4</span>
+          </div>
+          <div class="spec-card">
+            <span class="spec-card-label">Compute Device</span>
+            <span class="spec-card-val highlight-accent" id="drawer-compute-device">GPU (AMD ROCm / HIP)</span>
+          </div>
+          <div class="spec-card">
+            <span class="spec-card-label">Quantization</span>
+            <span class="spec-card-val">Q4_K_M (4-bit GGUF)</span>
+          </div>
+          <div class="spec-card">
+            <span class="spec-card-label">Context Limit</span>
+            <span class="spec-card-val">8,192 tokens</span>
+          </div>
+          <div class="spec-card">
+            <span class="spec-card-label">Sandbox Engine</span>
+            <span class="spec-card-val">Subprocess AST + 5.0s Cap</span>
+          </div>
+          <div class="spec-card">
+            <span class="spec-card-label">Scientific Rubric</span>
+            <span class="spec-card-val">100-Pt Modular Rubric</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 4. 100-Point Scientific Rubric Overview -->
+      <section class="settings-section">
+        <div class="settings-section-header">
+          <span class="settings-section-icon" aria-hidden="true">📊</span>
+          <div>
+            <h3 class="settings-section-title">Strict Rubric & Capping Rules</h3>
+            <p class="settings-section-desc">Scientific criteria applied to generated computational scripts</p>
+          </div>
+        </div>
+
+        <div class="rubric-summary-grid">
+          <div class="rubric-row">
+            <div class="rubric-row-left">
+              <span class="rubric-point-badge">35 pts</span>
+              <div>
+                <strong>Domain Accuracy & Physics</strong>
+                <p>Site classification (CUS, O_adb), RDF binning, survival probability formulas.</p>
+              </div>
+            </div>
+          </div>
+          <div class="rubric-row">
+            <div class="rubric-row-left">
+              <span class="rubric-point-badge">25 pts</span>
+              <div>
+                <strong>AST Scope & Syntax Validity</strong>
+                <p>Python AST validation. Syntax errors cap overall score at &le;45 (Grade F).</p>
+              </div>
+            </div>
+          </div>
+          <div class="rubric-row">
+            <div class="rubric-row-left">
+              <span class="rubric-point-badge">25 pts</span>
+              <div>
+                <strong>Runtime Stability & Isolation</strong>
+                <p>Subprocess test execution. Runtime crashes cap score at &le;55 (Grade D/F).</p>
+              </div>
+            </div>
+          </div>
+          <div class="rubric-row">
+            <div class="rubric-row-left">
+              <span class="rubric-point-badge">15 pts</span>
+              <div>
+                <strong>Output Completeness & Rigor</strong>
+                <p>Physical unit checks, numerical convergence, and figure artifact generation.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div class="settings-drawer-footer">
+      <div class="settings-footer-info">
+        <span class="footer-badge">v2.0 SciCompute</span>
+        <span class="footer-meta">Connected to localhost:8000</span>
+      </div>
+      <button type="button" class="btn btn-secondary btn-sm" id="btn-close-settings-footer">
+        Done
+      </button>
+    </div>
+  </aside>
+
+  <!-- Scroll to Top -->
+  <button id="scroll-top-btn" class="scroll-top-btn" aria-label="Scroll to top" title="Back to top" style="display:none;">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+      <polyline points="18 15 12 9 6 15"></polyline>
+    </svg>
+  </button>
+
+  <!-- Footer -->
+  <footer class="app-footer" role="contentinfo">
+    <div class="footer-content">
+      <span class="footer-version">SciCompute AI v2.0</span>
+      <span class="footer-sep">·</span>
+      <span class="footer-keys"><kbd>Ctrl</kbd>+<kbd>N</kbd> New Session · <kbd>Ctrl</kbd>+<kbd>K</kbd> Focus Input · <kbd>Esc</kbd> Close Menu</span>
+      <span class="footer-sep">·</span>
+      <span class="footer-copy">© 2026 Scientific Computing AI</span>
+    </div>
+  </footer>
 
   <!-- KaTeX for Scientific Math Formula Rendering -->
   <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>

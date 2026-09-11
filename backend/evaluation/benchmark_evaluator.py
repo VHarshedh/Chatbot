@@ -8,7 +8,8 @@ class BenchmarkEvaluator:
     defined in:
     ChatBot/Analysis/Water_Density_RDF_Survival_Probability_Hydroxyl_Fraction_with_IrO2_Template_Seperate_Plot_Capability.ipynb
     
-    Preserves exact 100-point rubric outputs, metric tolerances, and category schemas.
+    Strict 100-point rubric with fine-grained sub-checks, tightened tolerances,
+    and severity-tiered grade caps.
     """
 
     REFERENCE_NOTEBOOK: str = (
@@ -46,6 +47,9 @@ class BenchmarkEvaluator:
             "description": "Average equilibrium surface molecular water percentage"
         }
     }
+
+    # Tightened from 5% to 3% for stricter metric comparison
+    DEFAULT_METRIC_TOLERANCE: float = 0.03
 
     @staticmethod
     def extract_metrics(text: str) -> Dict[str, float]:
@@ -99,9 +103,12 @@ class BenchmarkEvaluator:
     def compare_metrics(
         self,
         candidate_metrics: Dict[str, float],
-        tolerance: float = 0.05
+        tolerance: float = None
     ) -> Dict[str, Any]:
         """Compares candidate numerical metrics against reference ground-truth values."""
+        if tolerance is None:
+            tolerance = self.DEFAULT_METRIC_TOLERANCE
+
         comparison: Dict[str, Any] = {}
         passed_count = 0
         total_compared = 0
@@ -148,6 +155,9 @@ class BenchmarkEvaluator:
             "ase_neighborlist_api": bool(
                 re.search(r"(neighbor_list|NeighborList|natural_cutoffs)", code)
             ),
+            "ase_io_read": bool(
+                re.search(r"(from\s+ase\.io\s+import|ase\.io\.read)", code)
+            ),
             "stoichiometry_bulk_filter": bool(
                 re.search(r"(s\s*\*\s*len|s\s*\*\s*N_metal|o_bul_vals\s*=\s*o_z\[\s*:\s*\(\s*s)", code)
             ),
@@ -158,10 +168,13 @@ class BenchmarkEvaluator:
                 re.search(r"(\('O',\s*'H'\)\s*:\s*1\.[1-3]|cutoff\s*=\s*1\.[1-3]|1\.2)", code)
             ),
             "mass_density_conversion_18_015": bool(
-                re.search(r"(18\.015|6\.023e23|volume\s*\*\s*1e-24)", code)
+                re.search(r"(18\.015|6\.022e23|6\.023e23|volume\s*\*\s*1e-24)", code)
             ),
             "pair_rdfs_present": bool(
                 re.search(r"(rpdf|atoms2struct|g_r_mow|g_r_osh|g_r_osow|dr\s*=\s*0\.05|pair_distribution)", code)
+            ),
+            "log_spaced_lags": bool(
+                re.search(r"(logspace|geomspace|np\.log)", code)
             ),
             "continuous_survival_intersection": bool(
                 re.search(r"(set\.intersection|intersection\s*\(|oh_sets)", code)
@@ -181,7 +194,11 @@ class BenchmarkEvaluator:
         }
 
     def evaluate(self, code: str, raw_response: str) -> Dict[str, Any]:
-        """Evaluates a script across the 5 flagship benchmark categories (100 pts total)."""
+        """
+        Evaluates a script across the 5 flagship benchmark categories (100 pts total).
+        
+        Strict mode: finer-grained sub-checks, tighter tolerances, severity-tiered caps.
+        """
         if not code:
             return {
                 "score": 0.0,
@@ -205,24 +222,39 @@ class BenchmarkEvaluator:
         passed: List[str] = []
         failed: List[str] = []
 
+        # =====================================================================
         # 1. Syntax & Core Imports (15 pts) [Notebook Cell 00]
+        # =====================================================================
         cat1_score = 0
         has_syntax_error = False
         try:
             ast.parse(code)
-            cat1_score += 5
+            cat1_score += 4
             passed.append("Valid Python AST syntax (code compiles without syntax errors).")
         except SyntaxError as e:
             has_syntax_error = True
-            failed.append(f"Syntax error: {e.msg} at line {e.lineno}")
+            failed.append(f"CRITICAL: Syntax error: {e.msg} at line {e.lineno}")
 
-        # ASE imports (Notebook Cell 00: ase, io, Atoms, neighbor_list)
-        has_ase = bool(re.search(r"\b(import\s+ase|from\s+ase)\b", code))
-        if has_ase:
-            cat1_score += 4
-            passed.append("Imported Atomic Simulation Environment (ASE) for trajectory handling (Notebook Cell 00: io, Atoms, neighbor_list).")
+        # Specific ase.io import (not just generic ase)
+        has_ase_io = bool(re.search(r"\b(from\s+ase\.io\s+import|from\s+ase\s+import\s+io|ase\.io\.read)", code))
+        has_ase_generic = bool(re.search(r"\b(import\s+ase|from\s+ase)\b", code))
+        if has_ase_io:
+            cat1_score += 3
+            passed.append("Imported ASE I/O module for trajectory reading (ase.io.read, Notebook Cell 00).")
+        elif has_ase_generic:
+            cat1_score += 1
+            passed.append("Generic ASE import detected (missing specific ase.io submodule import).")
+            failed.append("Missing specific `from ase.io import read` for trajectory loading (Notebook Cell 00).")
         else:
-            failed.append("Missing ASE import for structure/trajectory loading (Notebook Cell 00).")
+            failed.append("CRITICAL: Missing ASE import entirely — cannot load atomic structures (Notebook Cell 00).")
+
+        # Specific ase.neighborlist import
+        has_ase_neighborlist = bool(re.search(r"\b(from\s+ase\.neighborlist|from\s+ase\s+import.*neighborlist|neighbor_list)", code))
+        if has_ase_neighborlist:
+            cat1_score += 2
+            passed.append("Imported ASE neighborlist for coordination analysis (Notebook Cell 00).")
+        else:
+            failed.append("Missing `ase.neighborlist` import for neighbor search operations.")
 
         # NumPy import (Notebook Cell 00)
         has_numpy = bool(re.search(r"\b(import\s+numpy|from\s+numpy)\b", code))
@@ -230,7 +262,7 @@ class BenchmarkEvaluator:
             cat1_score += 3
             passed.append("Imported NumPy for numerical operations and array manipulation (Notebook Cell 00).")
         else:
-            failed.append("Missing NumPy import (Notebook Cell 00).")
+            failed.append("CRITICAL: Missing NumPy import (Notebook Cell 00).")
 
         # Matplotlib visualization imports (Notebook Cell 00/03/07)
         has_mpl = bool(re.search(r"\b(matplotlib|plt|pylab)\b", code))
@@ -240,107 +272,273 @@ class BenchmarkEvaluator:
         else:
             failed.append("Missing Matplotlib plotting imports.")
 
+        # =====================================================================
         # 2. Interfacial Site Identification (20 pts) [Notebook Cell 02 & Cell 05]
+        # =====================================================================
         cat2_score = 0
+
+        # Surface metal identification with z-coordinate logic
         has_msur = bool(re.search(r"(m_sur|surface_metal|topmost|max\s*\([^)]*z|z\s*>\s*|z_coord|m_z)", code, re.IGNORECASE))
         if has_msur:
-            cat2_score += 5
-            passed.append("Surface metal identification logic detected (identifies topmost metal layer, Notebook Cell 02 line 56, Cell 05 line 52).")
+            cat2_score += 3
+            passed.append("Surface metal identification logic detected (identifies topmost metal layer, Notebook Cell 02).")
         else:
             failed.append("Missing surface metal layer identification logic (Notebook Cell 02 line 56).")
 
+        # Z-coordinate sorting/selection (argsort, sort, argmax)
+        has_z_sort = bool(re.search(r"(argsort|np\.sort|argmax|sorted.*z|z\[.*argsort|positions\[:.*2\])", code))
+        if has_z_sort:
+            cat2_score += 2
+            passed.append("Z-coordinate sorting/selection for layer identification detected.")
+        else:
+            failed.append("Missing z-coordinate sorting (argsort/argmax) for systematic layer identification.")
+
+        # Bulk/water oxygen classification via stoichiometry
         has_obulk = bool(re.search(r"(o_bul|bulk_oxygen|o_w|water_oxygen|stoichiomet|s\s*\*\s*len|s\s*\*\s*N_metal)", code, re.IGNORECASE))
         if has_obulk:
-            cat2_score += 5
-            passed.append("Bulk vs. water oxygen classification logic detected via oxide stoichiometry (Notebook Cell 02 lines 58-75).")
+            cat2_score += 3
+            passed.append("Bulk vs. water oxygen classification logic detected via oxide stoichiometry (Notebook Cell 02).")
         else:
             failed.append("Missing bulk vs water oxygen separation logic (Notebook Cell 02 lines 58-75).")
 
+        # Stoichiometry ratio constant (s=2 for rutile MO2)
+        has_stoich_ratio = bool(re.search(r"(s\s*=\s*2|stoich.*=\s*2|ratio\s*=\s*2|n_o.*2\s*\*|2\s*\*\s*n_metal)", code, re.IGNORECASE))
+        if has_stoich_ratio:
+            cat2_score += 2
+            passed.append("Stoichiometry ratio s=2 for rutile MO₂ structure correctly specified.")
+        else:
+            failed.append("Missing explicit stoichiometry ratio (s=2 for rutile IrO₂/TiO₂).")
+
+        # CUS classification
         has_cus = bool(re.search(r"\b(cus|m_cus|coordinatively\s+unsaturated)\b", code, re.IGNORECASE))
         if has_cus:
-            cat2_score += 5
-            passed.append("Coordinatively Unsaturated Site (CUS) classification detected (Notebook Cell 02 line 78).")
+            cat2_score += 3
+            passed.append("Coordinatively Unsaturated Site (CUS) classification detected (Notebook Cell 02).")
         else:
             failed.append("Missing CUS site classification logic (Notebook Cell 02 line 78).")
 
+        # Explicit 2.5Å CUS cutoff distance
+        has_cus_cutoff = bool(re.search(r"(2\.5|2\.50|cutoff.*2\.5|dist.*<=?\s*2\.5)", code))
+        if has_cus_cutoff:
+            cat2_score += 2
+            passed.append("Explicit 2.5 Å distance cutoff for CUS oxygen coordination detected.")
+        else:
+            failed.append("Missing explicit 2.5 Å cutoff distance for CUS classification.")
+
+        # Adsorbed/bridge oxygen tagging
         has_oadb_obr = bool(re.search(r"(o_adb|adsorbed|o_br|bridge|o_sur)", code, re.IGNORECASE))
         if has_oadb_obr:
-            cat2_score += 5
-            passed.append("Adsorbed oxygen (O_adb) and bridge/surface oxygen (O_br) classification detected via 2.5 Å cutoff (Notebook Cell 02 lines 79-94).")
+            cat2_score += 3
+            passed.append("Adsorbed oxygen (O_adb) and bridge oxygen (O_br) classification detected (Notebook Cell 02).")
         else:
             failed.append("Missing adsorbed/bridge oxygen site tagging (Notebook Cell 02 lines 79-94).")
 
-        # 3. Density Profiles & Radial Distribution Functions (20 pts) [Notebook Cell 02 lines 102-155]
+        # Additional: explicit metal-oxygen distance check
+        has_mo_dist = bool(re.search(r"(get_distance|get_all_distances|distance_matrix|cdist)", code))
+        if has_mo_dist:
+            cat2_score += 2
+            passed.append("Pairwise distance computation for site classification detected.")
+        else:
+            failed.append("Missing explicit pairwise distance computation for site classification.")
+
+        cat2_score = min(cat2_score, 20)
+
+        # =====================================================================
+        # 3. Density Profiles & Radial Distribution Functions (20 pts)
+        # =====================================================================
         cat3_score = 0
+
+        # Mass/number density profile
         has_density = bool(re.search(r"(density|mass_density|number_density|bins_z|histogram)", code, re.IGNORECASE))
         if has_density:
-            cat3_score += 10
-            passed.append("Mass density profile calculations across z-bins detected (Notebook Cell 02 lines 102-132).")
+            cat3_score += 4
+            passed.append("Mass density profile calculations across z-bins detected (Notebook Cell 02).")
         else:
             failed.append("Missing mass/number density profile calculations along z-axis.")
 
+        # Bin-width specification (~0.1 Å)
+        has_bin_width = bool(re.search(r"(dr\s*=\s*0\.\d|dz\s*=\s*0\.\d|bin_width|delta_z\s*=|nbins|linspace)", code, re.IGNORECASE))
+        if has_bin_width:
+            cat3_score += 2
+            passed.append("Explicit bin-width/bin-count specification for density histogramming detected.")
+        else:
+            failed.append("Missing explicit bin-width specification (~0.1 Å) for density profiles.")
+
+        # Unit conversion constants (18.015 g/mol, Avogadro's number)
+        has_unit_conv = bool(re.search(r"(18\.015|6\.022e23|6\.023e23|avogadro|1e-24|1e24)", code, re.IGNORECASE))
+        if has_unit_conv:
+            cat3_score += 2
+            passed.append("Physical unit conversion constants (18.015 g/mol, Avogadro) detected for density in g/cm³.")
+        else:
+            failed.append("Missing unit conversion constants (18.015, 6.022e23) for g/cm³ density.")
+
+        # General RDF presence
         has_rdf = bool(re.search(r"(rdf|pair_distribution|g_r|rpdf)", code, re.IGNORECASE))
         if has_rdf:
-            cat3_score += 10
-            passed.append("Pair Radial Distribution Function (RDF) computation implemented (Notebook Cell 02 lines 135-155).")
+            cat3_score += 3
+            passed.append("Pair Radial Distribution Function (RDF) computation framework implemented (Notebook Cell 02).")
         else:
             failed.append("Missing Pair RDF (g(r)) calculations.")
 
-        # 4. Surface Kinetics & Survival Probability (25 pts) [Notebook Cell 05 & Cell 06]
+        # Specific RDF pairs: M_cus-O_w
+        has_rdf_mcus_ow = bool(re.search(r"(m_cus.*o_w|cus.*water|g_r_mow|metal.*water.*rdf|rdf.*cus)", code, re.IGNORECASE))
+        if has_rdf_mcus_ow:
+            cat3_score += 3
+            passed.append("RDF pair: M_cus—O_w (metal CUS to water oxygen) detected.")
+        else:
+            failed.append("Missing specific RDF pair: M_cus—O_w (metal CUS to water oxygen).")
+
+        # Specific RDF pairs: O_br-H_w
+        has_rdf_obr_hw = bool(re.search(r"(o_br.*h_w|bridge.*hydrogen|g_r_osh|obr.*hw|rdf.*bridge.*h)", code, re.IGNORECASE))
+        if has_rdf_obr_hw:
+            cat3_score += 3
+            passed.append("RDF pair: O_br—H_w (bridge oxygen to water hydrogen) detected.")
+        else:
+            failed.append("Missing specific RDF pair: O_br—H_w (bridge oxygen to water hydrogen).")
+
+        # Specific RDF pairs: O_br-O_w
+        has_rdf_obr_ow = bool(re.search(r"(o_br.*o_w|bridge.*water.*o|g_r_osow|obr.*ow|rdf.*bridge.*o)", code, re.IGNORECASE))
+        if has_rdf_obr_ow:
+            cat3_score += 3
+            passed.append("RDF pair: O_br—O_w (bridge oxygen to water oxygen) detected.")
+        else:
+            failed.append("Missing specific RDF pair: O_br—O_w (bridge oxygen to water oxygen).")
+
+        cat3_score = min(cat3_score, 20)
+
+        # =====================================================================
+        # 4. Surface Kinetics & Survival Probability (25 pts) [Cell 05 & 06]
+        # =====================================================================
         cat4_score = 0
+
+        # Hydroxyl tracking with 1.2 Å cutoff
         has_hydroxyl = bool(re.search(r"(hydroxyl|dissociat|frac_oh|surv_oh|neighbor_list|cutoff.*1\.[1-5]|indx_oh)", code, re.IGNORECASE))
         if has_hydroxyl:
-            cat4_score += 12
-            passed.append("Surface hydroxylation / water dissociation tracking implemented with 1.2 Å neighbor cutoff (Notebook Cell 05 lines 67-88).")
+            cat4_score += 6
+            passed.append("Surface hydroxylation / water dissociation tracking implemented (Notebook Cell 05).")
         else:
-            failed.append("Missing surface hydroxyl fraction / dissociation calculation (Notebook Cell 05 lines 67-88).")
+            failed.append("Missing surface hydroxyl fraction / dissociation calculation (Notebook Cell 05).")
 
+        # Survival probability P(t)
         has_survival = bool(re.search(r"(survival|p_t|residence|time_lag|lag|intersection|tau)", code, re.IGNORECASE))
         if has_survival:
-            cat4_score += 13
-            passed.append("Interfacial water survival probability P(t) tracking implemented via set intersection and residence time integration (Notebook Cell 05 lines 89-110, Cell 06).")
+            cat4_score += 6
+            passed.append("Interfacial water survival probability P(t) tracking implemented (Notebook Cell 05/06).")
         else:
-            failed.append("Missing water survival probability P(t) calculation (Notebook Cell 05 lines 89-110).")
+            failed.append("Missing water survival probability P(t) calculation (Notebook Cell 05).")
 
-        # 5. DP Model Averaging & Multi-Panel Artifacts (20 pts) [Notebook Cell 02/05/07]
+        # Log-spaced time lags
+        has_log_lags = bool(re.search(r"(logspace|geomspace|log_spaced|np\.log|log.*lag|geometric)", code, re.IGNORECASE))
+        if has_log_lags:
+            cat4_score += 4
+            passed.append("Log-spaced time lags for survival probability computation detected.")
+        else:
+            failed.append("Missing log-spaced time lags (logspace/geomspace) for P(t) sampling.")
+
+        # Continuous set intersection algorithm
+        has_set_intersection = bool(re.search(r"(set\.intersection|\.intersection\s*\(|oh_sets|set\s*&\s*set|&=)", code))
+        if has_set_intersection:
+            cat4_score += 4
+            passed.append("Continuous set intersection algorithm for survival tracking detected.")
+        else:
+            failed.append("Missing continuous set intersection algorithm for survival probability.")
+
+        # Trapezoidal integration for residence time tau
+        has_trapz = bool(re.search(r"(np\.trapezoid|np\.trapz|trapezoid\s*\(|trapz\s*\(|scipy\.integrate)", code))
+        if has_trapz:
+            cat4_score += 5
+            passed.append("Trapezoidal integration for residence time τ computation detected.")
+        else:
+            failed.append("Missing trapezoidal integration (np.trapz/trapezoid) for τ calculation.")
+
+        cat4_score = min(cat4_score, 25)
+
+        # =====================================================================
+        # 5. DP Model Averaging & Multi-Panel Artifacts (20 pts) [Cell 02/05/07]
+        # =====================================================================
         cat5_score = 0
+
+        # Multi-model loop
         has_multi_dp = bool(re.search(r"(dp_model|models|mean|std|average|cross_model|model_idx|modelz|model_num)", code, re.IGNORECASE))
         if has_multi_dp:
-            cat5_score += 5
-            passed.append("Multi-model trajectory loop / cross-model averaging (mean ± std) implemented across DP models (Notebook Cell 02 line 102, Cell 05 line 20).")
+            cat5_score += 3
+            passed.append("Multi-model trajectory loop / cross-model averaging (mean ± std) implemented.")
         else:
             failed.append("Missing multi-model DP loop or cross-model averaging logic.")
 
+        # Individual plots
         has_indiv_plots = bool(re.search(r"(savefig|plot.*density|plot.*rdf|plot.*survival|fig1|fig2|plt\.show)", code, re.IGNORECASE))
         if has_indiv_plots:
-            cat5_score += 5
-            passed.append("Individual plot generation and file saving logic detected (Notebook Cell 03).")
+            cat5_score += 3
+            passed.append("Individual plot generation and file saving logic detected.")
         else:
             failed.append("Missing individual figure saving routines.")
 
-        has_2x2 = bool(re.search(r"(subplots\s*\(\s*2\s*,\s*2|2x2|2,\s*2|grid|4.panel|axs\s*=\s*axs|full_analysis_presentation)", code, re.IGNORECASE))
+        # Specific figure filenames (density, rdf, survival)
+        has_specific_figs = bool(re.search(r"(density.*\.png|rdf.*\.png|survival.*\.png|fraction.*\.png)", code, re.IGNORECASE))
+        if has_specific_figs:
+            cat5_score += 2
+            passed.append("Domain-specific figure filenames (density.png, rdf.png, survival.png) detected.")
+        else:
+            failed.append("Missing domain-specific figure filenames for individual plots.")
+
+        # 2x2 multi-panel summary figure
+        has_2x2 = bool(re.search(r"(subplots\s*\(\s*2\s*,\s*2|2x2|2,\s*2|full_analysis_presentation)", code, re.IGNORECASE))
         if has_2x2:
-            cat5_score += 5
-            passed.append("Combined 2x2 multi-panel summary figure layout implemented (Notebook Cell 07 lines 25-95).")
+            cat5_score += 3
+            passed.append("Combined 2×2 multi-panel summary figure layout implemented (Notebook Cell 07).")
         else:
-            failed.append("Missing combined 2x2 summary figure creation (e.g. plt.subplots(2, 2)).")
+            failed.append("Missing combined 2×2 summary figure creation (e.g. plt.subplots(2, 2)).")
 
-        has_report = bool(re.search(r"(summary_report\.txt|report|residence_time|txt.*write|summary_report)", code, re.IGNORECASE))
+        # .npz data persistence
+        has_npz = bool(re.search(r"(np\.savez|\.npz|savez_compressed)", code))
+        if has_npz:
+            cat5_score += 3
+            passed.append("NumPy .npz data persistence (np.savez) for reproducibility detected.")
+        else:
+            failed.append("Missing .npz data persistence (np.savez) for result reproducibility.")
+
+        # Text summary report
+        has_report = bool(re.search(r"(summary_report\.txt|summary_report)", code, re.IGNORECASE))
         if has_report:
-            cat5_score += 5
-            passed.append("Text summary report generation (summary_report.txt) implemented (Notebook Cell 07 lines 115-125).")
+            cat5_score += 3
+            passed.append("Text summary report generation (summary_report.txt) implemented.")
         else:
-            failed.append("Missing summary_report.txt output generation (Notebook Cell 07 line 115).")
+            failed.append("Missing summary_report.txt output generation.")
 
-        # Total Score & Grade
+        # Report content validation (residence time + fractions mentioned)
+        has_report_content = bool(re.search(r"(residence.*time|tau.*write|frac.*write|dissociat.*write|report.*tau|report.*frac)", code, re.IGNORECASE))
+        if has_report_content:
+            cat5_score += 3
+            passed.append("Summary report contains residence times and dissociation fractions.")
+        else:
+            failed.append("Summary report missing required content (residence times + dissociation fractions).")
+
+        cat5_score = min(cat5_score, 20)
+
+        # =====================================================================
+        # Total Score & Grade (Strict Severity-Tiered Caps)
+        # =====================================================================
         raw_total = cat1_score + cat2_score + cat3_score + cat4_score + cat5_score
         raw_total = min(max(round(raw_total, 1), 0.0), 100.0)
         total_score = raw_total
 
+        # Count critical failures
+        critical_failures = sum(1 for f in failed if f.startswith("CRITICAL:"))
+
         if has_syntax_error:
-            total_score = min(total_score, 45.0)
+            # CRITICAL: Syntax error caps at 35 (stricter than previous 45)
+            total_score = min(total_score, 35.0)
             grade = "F"
-            summary = "Script failed evaluation: Fatal syntax error encountered. Code is uncompilable and cannot run."
+            summary = "CRITICAL FAILURE: Script contains a fatal syntax error and cannot be compiled."
+        elif critical_failures >= 2:
+            # Multiple critical failures (missing core imports)
+            total_score = min(total_score, 50.0)
+            if total_score >= 50:
+                grade = "D"
+            else:
+                grade = "F"
+            summary = f"Script has {critical_failures} critical failures (missing core imports/libraries)."
         elif total_score >= 90:
             grade = "A"
         elif total_score >= 80:
@@ -352,15 +550,17 @@ class BenchmarkEvaluator:
         else:
             grade = "F"
 
-        if not has_syntax_error:
+        if not has_syntax_error and critical_failures < 2:
             summary = (
                 f"Zero-shot script achieved an accuracy score of {total_score}/100 (Grade {grade}) "
-                f"against the reference notebook standard. Passed {len(passed)}/16 scientific checks. "
+                f"against the reference notebook standard. Passed {len(passed)}/{len(passed) + len(failed)} scientific checks. "
             )
             if total_score >= 90:
                 summary += "Outstanding compliance: The generated code faithfully replicates all stages of the reference analysis pipeline."
             elif total_score >= 80:
                 summary += "The model demonstrated strong scientific comprehension of interfacial water workflows from the notebook."
+            elif total_score >= 70:
+                summary += "Solid implementation with minor gaps in specific sub-checks or algorithmic details."
             elif total_score >= 60:
                 summary += "The model grasped the general pipeline structure but missed key mathematical or site classification details."
             else:
@@ -368,7 +568,7 @@ class BenchmarkEvaluator:
 
         notebook_features = self.inspect_notebook_features(code)
         extracted_cand = self.extract_metrics(raw_response)
-        metric_comparison = self.compare_metrics(extracted_cand, tolerance=0.05) if extracted_cand else None
+        metric_comparison = self.compare_metrics(extracted_cand) if extracted_cand else None
 
         category_scores = {
             "syntax_and_imports": {"score": cat1_score, "max": 15, "pct": round(cat1_score / 15 * 100)},

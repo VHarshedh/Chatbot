@@ -57,6 +57,7 @@ def read_root():
 @app.get("/api/model_info")
 def get_model_info():
     """Returns active model, GPU mode, and baseline evaluation status"""
+    settings.NUM_GPU = int(os.getenv("NUM_GPU", str(settings.NUM_GPU)))
     gpu_mode = "CPU-only" if settings.NUM_GPU == 0 else (
         f"GPU (all layers)" if settings.NUM_GPU == -1 else f"GPU ({settings.NUM_GPU} layers)"
     )
@@ -392,6 +393,7 @@ def delete_session(session_id: int):
 @app.on_event("startup")
 async def startup_event():
     init_db()
+    settings.NUM_GPU = int(os.getenv("NUM_GPU", str(settings.NUM_GPU)))
     gpu_mode = "CPU-only (NUM_GPU=0)" if settings.NUM_GPU == 0 else (
         "GPU — all layers (AMD Radeon via ROCm/HIP)" if settings.NUM_GPU == -1
         else f"GPU — {settings.NUM_GPU} layers"

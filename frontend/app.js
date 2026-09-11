@@ -27,6 +27,339 @@ const sidebarStatusDot = document.getElementById("sidebar-status-dot");
 const sidebarModeLabel = document.getElementById("sidebar-mode-label");
 const sidebarModeDesc = document.getElementById("sidebar-mode-desc");
 
+// Settings Drawer Elements
+const settingsToggleBtn = document.getElementById("settings-toggle-btn");
+const closeSettingsBtn = document.getElementById("close-settings-btn");
+const btnCloseSettingsFooter = document.getElementById("btn-close-settings-footer");
+const settingsDrawer = document.getElementById("settings-drawer");
+const settingsDrawerBackdrop = document.getElementById("settings-drawer-backdrop");
+const drawerModePill = document.getElementById("drawer-mode-pill");
+const drawerModePillText = document.getElementById("drawer-mode-pill-text");
+const drawerModeExplanation = document.getElementById("drawer-mode-explanation");
+const drawerModeTraits = document.getElementById("drawer-mode-traits");
+const drawerBtnZeroShot = document.getElementById("drawer-btn-zero-shot");
+const drawerBtnAgentic = document.getElementById("drawer-btn-agentic");
+const drawerModelName = document.getElementById("drawer-model-name");
+
+// ─── Toast Notification System ───────────────────────────────────────────────
+function showToast(message, type = "info", duration = 3000) {
+  const container = document.getElementById("toast-container");
+  if (!container) return;
+  const icons = { success: "✓", error: "✗", info: "ℹ", warning: "⚠" };
+  const toast = document.createElement("div");
+  toast.className = `toast toast-${type}`;
+  toast.innerHTML = `<span>${icons[type] || "ℹ"}</span><span>${message}</span>`;
+  container.appendChild(toast);
+  setTimeout(() => {
+    toast.classList.add("toast-exit");
+    setTimeout(() => toast.remove(), 300);
+  }, duration);
+}
+
+// ─── Theme Management (Dark, Light, High Contrast) ──────────────────────────
+function applyTheme(themeName, showNotification = false) {
+  const validThemes = ["dark", "light", "high-contrast"];
+  const targetTheme = validThemes.includes(themeName) ? themeName : "dark";
+
+  document.documentElement.setAttribute("data-theme", targetTheme);
+  localStorage.setItem("scicompute_theme", targetTheme);
+
+  // Update theme option cards inside the settings drawer
+  document.querySelectorAll(".theme-option-card").forEach((card) => {
+    const cardTheme = card.getAttribute("data-theme-value");
+    const isActive = cardTheme === targetTheme;
+    card.classList.toggle("active", isActive);
+    card.setAttribute("aria-checked", isActive ? "true" : "false");
+  });
+
+  if (showNotification) {
+    const labels = {
+      dark: "Dark Mode",
+      light: "Light Mode",
+      "high-contrast": "High Contrast Mode (WCAG AAA)"
+    };
+    showToast(`Switched to ${labels[targetTheme] || targetTheme}`, "info", 2000);
+  }
+}
+
+function initThemeToggle() {
+  const saved = localStorage.getItem("scicompute_theme");
+  if (saved) {
+    applyTheme(saved, false);
+  } else if (window.matchMedia("(prefers-contrast: more)").matches) {
+    applyTheme("high-contrast", false);
+  } else if (window.matchMedia("(prefers-color-scheme: light)").matches) {
+    applyTheme("light", false);
+  } else {
+    applyTheme("dark", false);
+  }
+
+  // Bind click & keyboard handlers to all theme cards
+  document.querySelectorAll(".theme-option-card").forEach((card) => {
+    card.addEventListener("click", () => {
+      const selected = card.getAttribute("data-theme-value");
+      applyTheme(selected, true);
+    });
+    card.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        const selected = card.getAttribute("data-theme-value");
+        applyTheme(selected, true);
+      }
+    });
+  });
+}
+
+// ─── Settings Drawer Controller ──────────────────────────────────────────────
+function openSettingsDrawer() {
+  if (!settingsDrawer || !settingsDrawerBackdrop) return;
+  settingsDrawer.classList.add("open");
+  settingsDrawer.setAttribute("aria-hidden", "false");
+  settingsDrawerBackdrop.classList.add("active");
+  settingsDrawerBackdrop.setAttribute("aria-hidden", "false");
+  settingsToggleBtn?.classList.add("active");
+  settingsToggleBtn?.setAttribute("aria-expanded", "true");
+  document.body.style.overflow = "hidden";
+  updateSettingsDrawerModeInfo();
+}
+
+function closeSettingsDrawer() {
+  if (!settingsDrawer || !settingsDrawerBackdrop) return;
+  settingsDrawer.classList.remove("open");
+  settingsDrawer.setAttribute("aria-hidden", "true");
+  settingsDrawerBackdrop.classList.remove("active");
+  settingsDrawerBackdrop.setAttribute("aria-hidden", "true");
+  settingsToggleBtn?.classList.remove("active");
+  settingsToggleBtn?.setAttribute("aria-expanded", "false");
+  document.body.style.overflow = "";
+}
+
+function updateSettingsDrawerModeInfo() {
+  const isAgentic = currentEngineMode === "agentic";
+  
+  if (drawerModePill) {
+    drawerModePill.className = `drawer-mode-pill ${isAgentic ? "mode-agentic" : "mode-zero-shot"}`;
+  }
+  if (drawerModePillText) {
+    drawerModePillText.textContent = isAgentic ? "🧠 Agentic RAG System" : "⚡ Zero-Shot Baseline";
+  }
+  if (drawerModeExplanation) {
+    if (isAgentic) {
+      drawerModeExplanation.innerHTML = `
+        <strong>Agentic RAG Mode</strong> executes a multi-step iterative pipeline with live tool-calling. It connects <em>batiai/gemma4-e2b:q4</em> with <strong>ChromaDB</strong> vector search, <strong>Kùzu</strong> graph knowledge lookups, a Python 3 subprocess <strong>execution sandbox</strong>, and scientific <strong>web search</strong> (arXiv, PubChem, NIST) to generate and verify calculations.
+      `;
+    } else {
+      drawerModeExplanation.innerHTML = `
+        <strong>Zero-Shot Baseline Mode</strong> executes direct prompt inference through <em>batiai/gemma4-e2b:q4</em> with <strong>zero external tools</strong> and <strong>zero RAG retrieval</strong>. This mode assesses raw foundation model weights, native computational chemistry syntax, and ASE/DeePMD code generation capabilities under pure pre-trained recall.
+      `;
+    }
+  }
+
+  if (drawerModeTraits) {
+    if (isAgentic) {
+      drawerModeTraits.innerHTML = `
+        <div class="trait-item">
+          <span class="trait-icon">📚</span>
+          <div class="trait-text">
+            <span class="trait-title">Hybrid Retrieval: Active</span>
+            <span class="trait-sub">ChromaDB semantic embeddings + Kùzu property graph</span>
+          </div>
+        </div>
+        <div class="trait-item">
+          <span class="trait-icon">🐳</span>
+          <div class="trait-text">
+            <span class="trait-title">Subprocess Sandbox: Enabled</span>
+            <span class="trait-sub">Executes generated script in isolated Python sandbox</span>
+          </div>
+        </div>
+        <div class="trait-item">
+          <span class="trait-icon">🌐</span>
+          <div class="trait-text">
+            <span class="trait-title">Web Search & Re-ranking: Active</span>
+            <span class="trait-sub">Live search for literature constants, lattice units & formulas</span>
+          </div>
+        </div>
+      `;
+    } else {
+      drawerModeTraits.innerHTML = `
+        <div class="trait-item">
+          <span class="trait-icon">🔒</span>
+          <div class="trait-text">
+            <span class="trait-title">External Tools: Disabled</span>
+            <span class="trait-sub">No Python sandbox or shell subprocess execution</span>
+          </div>
+        </div>
+        <div class="trait-item">
+          <span class="trait-icon">📚</span>
+          <div class="trait-text">
+            <span class="trait-title">Knowledge Graph & RAG: Disabled</span>
+            <span class="trait-sub">No ChromaDB vectors or Kùzu graph lookups</span>
+          </div>
+        </div>
+        <div class="trait-item">
+          <span class="trait-icon">🎯</span>
+          <div class="trait-text">
+            <span class="trait-title">Evaluation Objective</span>
+            <span class="trait-sub">Measures raw parametric chemistry knowledge vs 100-pt rubric</span>
+          </div>
+        </div>
+      `;
+    }
+  }
+
+  if (drawerBtnZeroShot) {
+    drawerBtnZeroShot.classList.toggle("active", !isAgentic);
+  }
+  if (drawerBtnAgentic) {
+    drawerBtnAgentic.classList.toggle("active", isAgentic);
+  }
+}
+
+function initSettingsDrawer() {
+  settingsToggleBtn?.addEventListener("click", () => {
+    if (settingsDrawer?.classList.contains("open")) {
+      closeSettingsDrawer();
+    } else {
+      openSettingsDrawer();
+    }
+  });
+
+  closeSettingsBtn?.addEventListener("click", closeSettingsDrawer);
+  btnCloseSettingsFooter?.addEventListener("click", closeSettingsDrawer);
+  settingsDrawerBackdrop?.addEventListener("click", closeSettingsDrawer);
+
+  drawerBtnZeroShot?.addEventListener("click", () => {
+    setEngineMode("zero_shot");
+    showToast("Switched to Zero-Shot Baseline", "info", 1500);
+  });
+
+  drawerBtnAgentic?.addEventListener("click", () => {
+    setEngineMode("agentic");
+    showToast("Switched to Agentic RAG System", "info", 1500);
+  });
+}
+
+// ─── Connection Health Check ─────────────────────────────────────────────────
+function initConnectionCheck() {
+  const badge = document.getElementById("connection-badge");
+  const dot = document.getElementById("connection-dot");
+  const text = document.getElementById("connection-text");
+  if (!badge) return;
+
+  async function checkHealth() {
+    try {
+      const res = await fetch("/api/model_info", { signal: AbortSignal.timeout(5000) });
+      if (res.ok) {
+        badge.className = "connection-badge online";
+        text.textContent = "Online";
+      } else {
+        badge.className = "connection-badge offline";
+        text.textContent = "Error";
+      }
+    } catch {
+      badge.className = "connection-badge offline";
+      text.textContent = "Offline";
+    }
+  }
+  checkHealth();
+  setInterval(checkHealth, 30000);
+}
+
+// ─── Scroll to Top ───────────────────────────────────────────────────────────
+function initScrollToTop() {
+  const btn = document.getElementById("scroll-top-btn");
+  if (!btn || !messagesContainer) return;
+  messagesContainer.addEventListener("scroll", () => {
+    if (messagesContainer.scrollTop > 400) {
+      btn.style.display = "flex";
+      btn.classList.add("visible");
+    } else {
+      btn.classList.remove("visible");
+      setTimeout(() => { if (!btn.classList.contains("visible")) btn.style.display = "none"; }, 300);
+    }
+  });
+  btn.addEventListener("click", () => {
+    messagesContainer.scrollTo({ top: 0, behavior: "smooth" });
+  });
+}
+
+// ─── Keyboard Shortcuts ──────────────────────────────────────────────────────
+function initKeyboardShortcuts() {
+  document.addEventListener("keydown", (e) => {
+    // Ctrl+N: New Session
+    if ((e.ctrlKey || e.metaKey) && e.key === "n") {
+      e.preventDefault();
+      startNewSession();
+      showToast("New session started", "success", 1500);
+    }
+    // Ctrl+K: Focus input
+    if ((e.ctrlKey || e.metaKey) && e.key === "k") {
+      e.preventDefault();
+      promptInput?.focus();
+    }
+    // Escape: Close mobile sidebar or settings drawer
+    if (e.key === "Escape") {
+      sidebar?.classList.remove("open");
+      closeSettingsDrawer();
+    }
+  });
+}
+
+// ─── Draft Recovery ──────────────────────────────────────────────────────────
+function initDraftRecovery() {
+  if (!promptInput) return;
+  const saved = localStorage.getItem("scicompute_draft");
+  if (saved && saved.trim()) {
+    promptInput.value = saved;
+    promptInput.style.height = "auto";
+    promptInput.style.height = Math.min(promptInput.scrollHeight, 180) + "px";
+  }
+  let debounceTimer = null;
+  promptInput.addEventListener("input", () => {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      localStorage.setItem("scicompute_draft", promptInput.value);
+    }, 500);
+  });
+}
+
+// ─── Skeleton Loading ────────────────────────────────────────────────────────
+function showSkeleton() {
+  const item = document.createElement("div");
+  item.className = "message-item assistant";
+  item.id = "skeleton-loader";
+  item.innerHTML = `
+    <div class="message-bubble" style="min-width:300px;">
+      <div class="skeleton skeleton-line" style="width:90%"></div>
+      <div class="skeleton skeleton-line" style="width:75%"></div>
+      <div class="skeleton skeleton-line" style="width:60%"></div>
+    </div>
+  `;
+  chatThread.appendChild(item);
+  scrollToBottom();
+  return item;
+}
+function removeSkeleton() {
+  const el = document.getElementById("skeleton-loader");
+  if (el) el.remove();
+}
+
+// ─── Animated Score Counter ──────────────────────────────────────────────────
+function animateScoreCounter(element, targetScore, duration = 1200) {
+  if (!element) return;
+  let start = 0;
+  const startTime = performance.now();
+  function update(currentTime) {
+    const elapsed = currentTime - startTime;
+    const progress = Math.min(elapsed / duration, 1);
+    const eased = 1 - Math.pow(1 - progress, 3);
+    const current = Math.round(eased * targetScore);
+    element.textContent = current;
+    if (progress < 1) requestAnimationFrame(update);
+  }
+  requestAnimationFrame(update);
+}
+
 // Mode Switching Handler
 function setEngineMode(mode, persist = true) {
   currentEngineMode = (mode === "agentic" || mode === "agentic_rag") ? "agentic" : "zero_shot";
@@ -40,9 +373,10 @@ function setEngineMode(mode, persist = true) {
 
     if (engineStatusPill) {
       engineStatusPill.className = "pill-badge pill-agentic";
+      engineStatusPill.title = "Agentic RAG Mode (ChromaDB • Kùzu Graph • Docker Sandbox • Web Search)";
     }
     if (engineStatusText) {
-      engineStatusText.textContent = "🧠 Agentic RAG Mode (RAG • Sandbox • Web)";
+      engineStatusText.textContent = "🧠 Agentic RAG Mode (Tools Active)";
     }
     if (sidebarStatusDot) {
       sidebarStatusDot.style.background = "var(--accent-primary)";
@@ -60,6 +394,7 @@ function setEngineMode(mode, persist = true) {
 
     if (engineStatusPill) {
       engineStatusPill.className = "pill-badge pill-zero-shot";
+      engineStatusPill.title = "Zero-Shot Baseline (Direct LLM inference without tools or RAG)";
     }
     if (engineStatusText) {
       engineStatusText.textContent = "⚡ Zero-Shot Mode (No Tools • No RAG)";
@@ -75,6 +410,8 @@ function setEngineMode(mode, persist = true) {
       sidebarModeDesc.textContent = "No Tools • No RAG";
     }
   }
+
+  updateSettingsDrawerModeInfo();
 }
 
 // Category Display Metadata
@@ -103,24 +440,34 @@ const CATEGORY_META = {
   // Dynamic Hybrid Evaluator Categories
   syntax_and_safety: {
     label: "1. Syntax Parsing & Security Isolation Audit",
-    max: 20
+    max: 15
   },
   domain_implementation: {
     label: "2. Scientific Domain Implementation & Constraints",
-    max: 50
+    max: 30
+  },
+  runtime_execution_and_contracts: {
+    label: "3. Scope Resolution & Runtime Execution",
+    max: 25
   },
   scientific_rigor: {
-    label: "3. Algorithmic Rigor & Vectorization Quality",
+    label: "4. Scientific Rigor (Units, Naming, Docs, Error Handling)",
     max: 15
   },
   artifacts_and_presentation: {
-    label: "4. Visualization, Figures & Persistence",
+    label: "5. Visualization, Figures & Persistence",
     max: 15
   }
 };
 
 // Initialize application
 document.addEventListener("DOMContentLoaded", async () => {
+  initThemeToggle();
+  initSettingsDrawer();
+  initKeyboardShortcuts();
+  initConnectionCheck();
+  initScrollToTop();
+  initDraftRecovery();
   setupTextareaAutoGrow();
   setupEventListeners();
   const savedMode = localStorage.getItem("scicompute_engine_mode");
@@ -167,6 +514,16 @@ async function loadModelInfo() {
       const data = await res.json();
       if (modelNameDisplay) {
         modelNameDisplay.textContent = data.model_name;
+      }
+      const drawerModel = document.getElementById("drawer-model-name");
+      if (drawerModel) {
+        drawerModel.textContent = data.model_name;
+      }
+      const drawerCompute = document.getElementById("drawer-compute-device");
+      if (drawerCompute && data.gpu_mode) {
+        const isCpu = data.num_gpu === 0 || data.gpu_mode.toLowerCase().includes("cpu");
+        drawerCompute.textContent = isCpu ? "CPU-only (NUM_GPU=0)" : "GPU (AMD ROCm / HIP)";
+        drawerCompute.className = isCpu ? "spec-card-val" : "spec-card-val highlight-accent";
       }
     }
   } catch (err) {
@@ -588,6 +945,12 @@ function renderEvaluationReport(ev) {
 
   container.appendChild(card);
   chatThread.appendChild(container);
+
+  // Animate the score counter
+  const scoreNumEl = card.querySelector(".score-num");
+  if (scoreNumEl && score > 0) {
+    animateScoreCounter(scoreNumEl, score, 1200);
+  }
 }
 
 // Format short date helper
@@ -680,6 +1043,7 @@ async function deleteSession(sessionId) {
   try {
     const res = await fetch(`/api/sessions/${sessionId}`, { method: "DELETE" });
     if (res.ok) {
+      showToast("Session deleted", "success", 2000);
       if (currentSessionId === sessionId) {
         startNewSession();
       } else {
@@ -688,6 +1052,7 @@ async function deleteSession(sessionId) {
     }
   } catch (err) {
     console.error("Error deleting session:", err);
+    showToast("Failed to delete session", "error", 2500);
   }
 }
 
@@ -764,6 +1129,7 @@ chatForm.addEventListener("submit", async (e) => {
 
   promptInput.value = "";
   promptInput.style.height = "auto";
+  localStorage.removeItem("scicompute_draft");
   welcomeHero.style.display = "none";
 
   appendMessage("user", text);
@@ -1391,12 +1757,14 @@ window.copyCodeFromBlock = function(btn) {
     const originalText = btn.textContent;
     btn.textContent = "Copied! ✓";
     btn.classList.add("copied");
+    showToast("Code copied to clipboard", "success", 2000);
     setTimeout(() => {
       btn.textContent = originalText;
       btn.classList.remove("copied");
     }, 2000);
   }).catch(() => {
-    btn.textContent = "Copied!";
+    btn.textContent = "Error";
+    showToast("Failed to copy code", "error", 2000);
   });
 };
 
