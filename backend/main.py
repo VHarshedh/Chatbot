@@ -193,7 +193,7 @@ def evaluate_zero_shot_stream_endpoint(request: EvaluationRequest):
         # Evaluate the completed script
         if full_response_text:
             evaluator = ScriptEvaluator()
-            evaluation = evaluator.evaluate(full_response_text)
+            evaluation = evaluator.evaluate(full_response_text, prompt=prompt)
 
             eval_id = insert_evaluation(
                 session_id=session_id,
@@ -225,6 +225,8 @@ def evaluate_zero_shot_stream_endpoint(request: EvaluationRequest):
                 "passed_checks": evaluation["passed_checks"],
                 "failed_checks": evaluation["failed_checks"],
                 "summary": evaluation["summary"],
+                "evaluation_type": evaluation.get("evaluation_type", "rag_benchmark"),
+                "domain": evaluation.get("domain"),
                 "latency_seconds": latency_seconds
             }
             yield f"data: {json.dumps(eval_event)}\n\n"
@@ -268,7 +270,7 @@ def evaluate_zero_shot_endpoint(request: EvaluationRequest):
 
     raw_response = chat_res.get("response", "")
     evaluator = ScriptEvaluator()
-    evaluation = evaluator.evaluate(raw_response)
+    evaluation = evaluator.evaluate(raw_response, prompt=prompt)
 
     eval_id = insert_evaluation(
         session_id=chat_res["session_id"],
@@ -305,8 +307,29 @@ def evaluate_zero_shot_endpoint(request: EvaluationRequest):
 
 @app.get("/api/evaluations")
 def list_evaluations():
-    """Retrieves previous zero-shot script evaluations"""
-    return get_evaluations(limit=25)
+    """Retrieves previous script evaluations with parsed reports"""
+    rows = get_evaluations(limit=25)
+    result = []
+    for r in rows:
+        item = dict(r)
+        if isinstance(item.get("category_scores_json"), str):
+            try:
+                item["category_scores"] = json.loads(item["category_scores_json"])
+            except Exception:
+                item["category_scores"] = {}
+        if isinstance(item.get("evaluation_report_json"), str):
+            try:
+                rep = json.loads(item["evaluation_report_json"])
+                item["evaluation_report"] = rep
+                item["passed_checks"] = rep.get("passed_checks", [])
+                item["failed_checks"] = rep.get("failed_checks", [])
+                item["summary"] = rep.get("summary", "")
+                item["evaluation_type"] = rep.get("evaluation_type", "rag_benchmark")
+                item["domain"] = rep.get("domain")
+            except Exception:
+                item["evaluation_report"] = {}
+        result.append(item)
+    return result
 
 @app.get("/api/sessions")
 def list_sessions():

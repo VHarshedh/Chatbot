@@ -1,5 +1,9 @@
 import pytest
 from backend.evaluation.script_evaluator import ScriptEvaluator
+from backend.evaluation.ast_analyzer import AstAnalyzer
+from backend.evaluation.domain_rules import DomainClassifier, DomainRule, ScientificDomain
+from backend.evaluation.dynamic_test_generator import DynamicTestGenerator
+from backend.evaluation.benchmark_evaluator import BenchmarkEvaluator
 
 def test_extract_python_code():
     evaluator = ScriptEvaluator()
@@ -318,3 +322,401 @@ print("Analysis complete")
     assert res["metric_comparison"] is not None
     assert res["metric_comparison"]["all_passed"] is True
     assert res["metric_comparison"]["passed_count"] >= 2
+
+def test_ast_analyzer_features():
+    code = """
+import numpy as np
+from ase.io import read
+import matplotlib.pyplot as plt
+
+def compute_adsorption_energy(slab, adsorbate, e_clean, e_mol):
+    \"\"\"Calculates surface adsorption energy in eV.\"\"\"
+    e_total = slab.get_potential_energy()
+    e_ads = e_total - (e_clean + e_mol)
+    return e_ads
+
+fig = plt.figure()
+plt.plot([1, 2], [3, 4])
+plt.savefig("ads.png")
+with open("result.txt", "w") as f:
+    f.write("done")
+"""
+    analyzer = AstAnalyzer(code)
+    report = analyzer.analyze()
+    assert report["syntax_valid"] is True
+    assert "numpy" in report["imports"]["modules"]
+    assert "ase.io.read" in report["imports"]["from_imports"]
+    assert len(report["functions"]) == 1
+    assert report["functions"][0]["name"] == "compute_adsorption_energy"
+    assert len(report["functions"][0]["args"]) == 4
+    assert report["safety"]["safe"] is True
+    assert report["patterns"]["has_plotting"] is True
+    assert report["patterns"]["has_saving"] is True
+    assert report["patterns"]["has_file_io"] is True
+    assert "numpy" in report["patterns"]["scientific_libs"]
+    assert "ase" in report["patterns"]["scientific_libs"]
+
+def test_ast_analyzer_syntax_error_and_empty():
+    empty_analyzer = AstAnalyzer("")
+    assert empty_analyzer.syntax_valid is False
+    assert empty_analyzer.extract_imports() == {"modules": set(), "from_imports": set(), "aliases": set()}
+    assert empty_analyzer.extract_functions() == []
+    assert empty_analyzer.check_safety()["safe"] is True
+    assert empty_analyzer.detect_computational_patterns()["loop_count"] == 0
+
+    bad_analyzer = AstAnalyzer("def broken(: pass")
+    assert bad_analyzer.syntax_valid is False
+    assert bad_analyzer.syntax_error_msg is not None
+
+def test_ast_analyzer_safety_violation():
+    unsafe_code = """
+import os
+os.system("rm -rf /")
+eval("print('danger')")
+"""
+    analyzer = AstAnalyzer(unsafe_code)
+    report = analyzer.analyze()
+    assert report["safety"]["safe"] is False
+    assert len(report["safety"]["violations"]) >= 1
+
+def test_domain_classifier_and_rules():
+    # Surface domain
+    d_surf = DomainClassifier.classify("Calculate CO adsorption on Pt(111) slab surface facet", "")
+    assert d_surf == ScientificDomain.SURFACE_AND_INTERFACES
+
+    # MD domain
+    d_md = DomainClassifier.classify("Run molecular dynamics trajectory under NVT ensemble and calculate MSD diffusion", "")
+    assert d_md == ScientificDomain.MOLECULAR_DYNAMICS
+
+    # Structure domain
+    d_struct = DomainClassifier.classify("Compute pair radial distribution function g(r) and neighbor list", "")
+    assert d_struct == ScientificDomain.STRUCTURE_AND_COORDINATION
+
+    # DFT domain
+    d_dft = DomainClassifier.classify("Configure DFT kpoints and calculate band structure density of states", "")
+    assert d_dft == ScientificDomain.DFT_AND_ELECTRONIC
+
+    # Thermodynamics domain
+    d_thermo = DomainClassifier.classify("Estimate free energy barrier and reaction coordinate residence time tau", "")
+    assert d_thermo == ScientificDomain.THERMODYNAMICS_AND_KINETICS
+
+    # Fallback general
+    d_gen = DomainClassifier.classify("Analyze arbitrary numbers", "")
+    assert d_gen == ScientificDomain.GENERAL_SIMULATION
+
+    rules = DomainClassifier.get_rules_for_domain(ScientificDomain.SURFACE_AND_INTERFACES)
+    assert len(rules) >= 4
+
+def test_domain_rule_exception_resilience():
+    # Ensure DomainRule gracefully returns False if a checker raises an exception
+    def failing_checker(code, ast_info):
+        raise ValueError("Simulated check failure")
+
+    rule = DomainRule("test_fail", "Test failure rule", weight=10, checker=failing_checker)
+    assert rule.evaluate("code", {}) is False
+
+def test_dynamic_test_generator_empty():
+    gen = DynamicTestGenerator()
+    res = gen.generate_and_evaluate("")
+    assert res["score"] == 0.0
+    assert res["grade"] == "F"
+    assert len(res["failed_checks"]) >= 1
+
+def test_dynamic_test_generator_surface_workflow():
+    prompt = "Write a Python script using ASE to calculate adsorption energy on a Cu(111) surface slab."
+    script = """```python
+import numpy as np
+import ase
+from ase.build import fcc111, molecule
+import matplotlib.pyplot as plt
+
+def build_slab_and_adsorb():
+    slab = fcc111('Cu', size=(3, 3, 4), vacuum=10.0)
+    co = molecule('CO')
+    z_coords = slab.positions[:, 2]
+    topmost_z = np.max(z_coords)
+    return slab, co, topmost_z
+
+def calculate_adsorption_energy(e_total, e_slab, e_co):
+    e_ads = e_total - (e_slab + e_co)
+    return e_ads
+
+plt.figure()
+plt.plot([1, 2], [-0.5, -0.6])
+plt.savefig("adsorption_energy.png")
+print("Adsorption calculation complete")
+```"""
+    gen = DynamicTestGenerator(prompt=prompt)
+    res = gen.generate_and_evaluate(script)
+    assert res["domain"] == ScientificDomain.SURFACE_AND_INTERFACES.value
+    assert res["score"] >= 80.0
+    assert res["grade"] in ("A", "B")
+    assert len(res["passed_checks"]) >= 3
+    assert any("test_syntax_compilation" in t["name"] for t in res["generated_tests"])
+
+def test_dynamic_test_generator_md_workflow():
+    prompt = "Run trajectory analysis to compute diffusion coefficient and MSD under NVT ensemble."
+    script = """```python
+import numpy as np
+import ase
+from ase.io import read
+import matplotlib.pyplot as plt
+
+def compute_msd(traj_file):
+    traj = read(traj_file, index=':')
+    displacements = []
+    for frame in traj:
+        displacements.append(np.mean(frame.positions**2))
+    msd = np.array(displacements)
+    diffusion = np.mean(msd) / (6.0 * 10.0)
+    return msd, diffusion
+
+plt.plot([0, 1, 2], [0, 1, 4])
+plt.savefig("msd.png")
+```"""
+    gen = DynamicTestGenerator(prompt=prompt)
+    res = gen.generate_and_evaluate(script)
+    assert res["domain"] == ScientificDomain.MOLECULAR_DYNAMICS.value
+    assert res["score"] >= 80.0
+    assert res["grade"] in ("A", "B")
+
+def test_dynamic_test_generator_dft_workflow():
+    prompt = "Set up DFT kpoints and calculate total energy and forces."
+    script = """```python
+import numpy as np
+import ase
+from ase.calculators.vasp import Vasp
+
+def setup_dft(atoms):
+    calc = Vasp(kpts=[4, 4, 4], encut=400, xc='PBE')
+    atoms.calc = calc
+    energy = atoms.get_potential_energy()
+    forces = atoms.get_forces()
+    return energy, forces
+
+with open("summary.txt", "w") as f:
+    f.write("DFT converged")
+```"""
+    gen = DynamicTestGenerator(prompt=prompt)
+    res = gen.generate_and_evaluate(script)
+    assert res["domain"] == ScientificDomain.DFT_AND_ELECTRONIC.value
+    assert res["score"] >= 70.0
+
+def test_dynamic_test_generator_thermo_workflow():
+    prompt = "Calculate free energy barrier and residence time tau."
+    script = """```python
+import numpy as np
+import matplotlib.pyplot as plt
+
+def compute_kinetics(time_lags):
+    tau = 0.5
+    fraction = 0.8
+    p_t = np.exp(-time_lags / tau)
+    return tau, fraction, p_t
+
+plt.figure()
+plt.plot([0, 1], [1, 0])
+plt.savefig("rate.png")
+```"""
+    gen = DynamicTestGenerator(prompt=prompt)
+    res = gen.generate_and_evaluate(script)
+    assert res["domain"] == ScientificDomain.THERMODYNAMICS_AND_KINETICS.value
+    assert res["score"] >= 70.0
+
+def test_dynamic_test_generator_general_simulation():
+    prompt = "Perform simulation analysis."
+    script = """```python
+import numpy as np
+def run_simulation(x):
+    data = np.linspace(0, 10, 100)
+    result = np.mean(data)
+    return result
+print(run_simulation(5))
+```"""
+    gen = DynamicTestGenerator(prompt=prompt)
+    res = gen.generate_and_evaluate(script)
+    assert res["domain"] == ScientificDomain.GENERAL_SIMULATION.value
+    assert res["score"] >= 60.0
+
+def test_dynamic_test_generator_safety_audit_failure():
+    prompt = "Calculate adsorption energy"
+    unsafe_script = """```python
+import os
+os.system("del *.*")
+```"""
+    gen = DynamicTestGenerator(prompt=prompt)
+    res = gen.generate_and_evaluate(unsafe_script)
+    assert any("Security audit failed" in f for f in res["failed_checks"])
+
+def test_benchmark_evaluator_direct():
+    b_eval = BenchmarkEvaluator()
+    assert "Water_Density_RDF_Survival_Probability" in b_eval.REFERENCE_NOTEBOOK
+    empty_res = b_eval.evaluate("", "")
+    assert empty_res["score"] == 0.0
+    assert empty_res["grade"] == "F"
+
+def test_hybrid_routing():
+    evaluator = ScriptEvaluator()
+
+    # 1. No prompt -> routes to flagship benchmark for backward compatibility
+    res_default = evaluator.evaluate("")
+    assert res_default["evaluation_type"] == "rag_benchmark"
+    assert "reference_notebook" in res_default
+
+    # 2. Flagship benchmark prompt -> routes to flagship benchmark
+    flagship_prompt = "Run the interfacial water analysis benchmark on IrO2 rutile surface."
+    res_flagship = evaluator.evaluate("", prompt=flagship_prompt)
+    assert res_flagship["evaluation_type"] == "rag_benchmark"
+
+    # 3. Out-of-RAG prompt -> routes to dynamic hybrid
+    out_prompt = "Calculate Cu(111) surface adsorption energy of CO molecule using ASE."
+    script = """```python
+import numpy as np
+import ase
+from ase.build import fcc111
+slab = fcc111('Cu', size=(2, 2, 3), vacuum=10.0)
+z_vals = slab.positions[:, 2]
+top_z = np.max(z_vals)
+energy = -0.75
+import matplotlib.pyplot as plt
+plt.plot([0, 1], [0, energy])
+plt.savefig("out.png")
+```"""
+    res_dynamic = evaluator.evaluate(script, prompt=out_prompt)
+    assert res_dynamic["evaluation_type"] == "dynamic_hybrid"
+    assert res_dynamic["domain"] == ScientificDomain.SURFACE_AND_INTERFACES.value
+    assert res_dynamic["score"] > 0
+    assert "generated_tests" in res_dynamic
+    assert res_dynamic["reference_notebook"] is None
+    assert res_dynamic["metric_comparison"] is None
+
+def test_dynamic_test_generator_syntax_error():
+    gen = DynamicTestGenerator(prompt="Calculate surface energy")
+    res = gen.generate_and_evaluate("def invalid_syntax(: pass")
+    assert any("Syntax error in script" in f for f in res["failed_checks"])
+
+def test_dynamic_test_generator_unvectorized_and_grades():
+    # Loop-heavy unvectorized code
+    prompt = "Process numerical data"
+    script = """
+for i in range(10):
+    for j in range(10):
+        for k in range(10):
+            for m in range(10):
+                for n in range(10):
+                    pass
+"""
+    gen = DynamicTestGenerator(prompt=prompt)
+    res = gen.generate_and_evaluate(script)
+    assert any("Relies heavily on non-vectorized" in f for f in res["failed_checks"])
+    assert res["grade"] in ("C", "D", "F")
+
+def test_domain_rules_structure_and_coordination():
+    prompt = "Compute RDF and coordination numbers"
+    code = """
+import numpy as np
+import ase
+from ase.neighborlist import neighbor_list
+def calc_rdf(atoms):
+    nl = neighbor_list('d', atoms, cutoff=3.0)
+    g_r, bins = np.histogram(nl, bins=50)
+    return g_r, bins
+import matplotlib.pyplot as plt
+plt.plot([1, 2], [3, 4])
+plt.savefig("rdf.png")
+"""
+    gen = DynamicTestGenerator(prompt=prompt)
+    res = gen.generate_and_evaluate(code)
+    assert res["domain"] == ScientificDomain.STRUCTURE_AND_COORDINATION.value
+    assert res["score"] >= 80.0
+
+def test_script_evaluator_flagship_code_detection():
+    evaluator = ScriptEvaluator()
+    # Code contains signature benchmark variable m_sur
+    code_with_sig = "m_sur = [1, 2]\no_bulk = [3, 4]\ncus_sites = [1]\nfull_analysis_presentation = 'fig.png'"
+    assert evaluator.is_flagship_benchmark(prompt="Some generic prompt", code=code_with_sig) is True
+
+def test_dynamic_test_generator_undefined_symbols_penalty():
+    prompt = "Run surface calculation"
+    code = "import numpy as np\nresult = undefined_func(missing_var)\n"
+    gen = DynamicTestGenerator(prompt=prompt)
+    res = gen.generate_and_evaluate(code)
+    assert res["score"] <= 65.0
+    assert any("Undefined variables or missing imports" in f for f in res["failed_checks"])
+
+def test_dynamic_test_generator_runtime_crash_penalty():
+    prompt = "Run calculation"
+    code = "import numpy as np\nx = 1 / 0\n"
+    gen = DynamicTestGenerator(prompt=prompt)
+    res = gen.generate_and_evaluate(code)
+    assert res["score"] <= 55.0
+    assert res["grade"] in ("D", "F")
+    assert any("Runtime execution failure" in f for f in res["failed_checks"])
+
+def test_dynamic_test_generator_soft_plotting_and_fences():
+    prompt = "General math plot"
+    code = "```\nimport numpy as np\nimport matplotlib.pyplot as plt\nplt.title('Test')\n```"
+    gen = DynamicTestGenerator(prompt=prompt)
+    res = gen.generate_and_evaluate(code)
+    assert res["score"] > 0
+    assert any("Plotting calls detected" in p for p in res["passed_checks"])
+
+def test_ast_analyzer_advanced_syntax():
+    code = """
+import numpy as np
+from math import sqrt as my_sqrt
+
+def my_func(a, *args, b=1, **kwargs):
+    for x, y in [(1, 2)]:
+        pass
+    try:
+        val = 10
+    except ValueError as err:
+        pass
+    with open('test.txt') as handle:
+        pass
+    return a
+"""
+    analyzer = AstAnalyzer(code)
+    analysis = analyzer.analyze()
+    assert analysis["syntax_valid"] is True
+    assert any(f["name"] == "my_func" for f in analysis["functions"])
+    assert "undefined_symbols" in analysis
+
+def test_dynamic_test_generator_timeout(monkeypatch):
+    import subprocess
+    prompt = "Timeout test"
+    code = "import time\ntime.sleep(10)"
+    gen = DynamicTestGenerator(prompt=prompt)
+
+    def mock_run(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd="python", timeout=5)
+
+    monkeypatch.setattr(subprocess, "run", mock_run)
+    res = gen.generate_and_evaluate(code)
+    assert any("Execution timed out" in f for f in res["failed_checks"])
+
+def test_dynamic_test_generator_grade_branches():
+    gen = DynamicTestGenerator(prompt="Generic data analysis")
+    # Score in A range (>=90)
+    script_a = """
+import numpy as np
+import matplotlib.pyplot as plt
+
+def process_data(vals):
+    m = np.mean(vals)
+    s = np.std(vals)
+    return m, s
+
+data = np.array([1.0, 2.0, 3.0])
+mean_v, std_v = process_data(data)
+plt.plot(data)
+plt.savefig("plot.png")
+print("Done")
+"""
+    res_a = gen.generate_and_evaluate(script_a)
+    assert res_a["grade"] == "A"
+    assert "summary" in res_a
+
+
+

@@ -28,6 +28,7 @@ kuzu_db/
 chatbox.db
 chatbox.db-journal
 *.sqlite3
+*.bak
 kuzu_db.wal
 kuzu_db
 

@@ -79,6 +79,7 @@ function setEngineMode(mode, persist = true) {
 
 // Category Display Metadata
 const CATEGORY_META = {
+  // Flagship RAG Benchmark Categories
   syntax_and_imports: {
     label: "1. Syntax & Core Imports (ASE, NumPy, Matplotlib)",
     max: 15
@@ -98,6 +99,23 @@ const CATEGORY_META = {
   model_averaging_and_outputs: {
     label: "5. DP Averaging, 2×2 Summary Figure & Text Report",
     max: 20
+  },
+  // Dynamic Hybrid Evaluator Categories
+  syntax_and_safety: {
+    label: "1. Syntax Parsing & Security Isolation Audit",
+    max: 20
+  },
+  domain_implementation: {
+    label: "2. Scientific Domain Implementation & Constraints",
+    max: 50
+  },
+  scientific_rigor: {
+    label: "3. Algorithmic Rigor & Vectorization Quality",
+    max: 15
+  },
+  artifacts_and_presentation: {
+    label: "4. Visualization, Figures & Persistence",
+    max: 15
   }
 };
 
@@ -379,11 +397,14 @@ async function loadEvaluationHistory() {
 
       const dateStr = ev.created_at ? formatShortDate(ev.created_at) : "Recent";
       const gradeClass = `grade-${ev.grade || "F"}`;
+      const isHybrid = ev.evaluation_type === "dynamic_hybrid";
+      const badgeIcon = isHybrid ? "🧪" : "🎯";
+      const domainLabel = ev.domain ? ` • ${ev.domain.replace(/_/g, " ")}` : "";
 
       item.innerHTML = `
         <div class="eval-history-left">
-          <span class="eval-history-title">Eval #${ev.id} • ${ev.score}/100</span>
-          <span class="eval-history-time">${dateStr}</span>
+          <span class="eval-history-title">${badgeIcon} Eval #${ev.id} • ${ev.score}/100</span>
+          <span class="eval-history-time">${dateStr}${domainLabel}</span>
         </div>
         <span class="eval-history-badge ${gradeClass}">${ev.grade || "F"}</span>
       `;
@@ -417,9 +438,15 @@ function renderEvaluationReport(ev) {
   const report = ev.evaluation_report || {};
   const passedChecks = ev.passed_checks || report.passed_checks || [];
   const failedChecks = ev.failed_checks || report.failed_checks || [];
-  const summaryText = ev.summary || report.summary || "Zero-shot script benchmark completed.";
+  const summaryText = ev.summary || report.summary || "Script benchmark completed.";
   const catScores = ev.category_scores || {};
   const codeText = ev.generated_code || "";
+
+  const isHybrid = ev.evaluation_type === "dynamic_hybrid";
+  const titleText = isHybrid
+    ? `Dynamic Scientific Evaluator (${(ev.domain || "Simulation").replace(/_/g, " ").toUpperCase()})`
+    : "Interfacial Water Dynamics Generator";
+  const modeLabel = isHybrid ? "Dynamic Hybrid Test Suite" : "Zero-Shot Flagship Benchmark";
 
   // 1. Header
   let html = `
@@ -430,7 +457,7 @@ function renderEvaluationReport(ev) {
           <span class="score-denom">/ 100</span>
         </div>
         <div class="score-text-details">
-          <h3>Interfacial Water Dynamics Generator</h3>
+          <h3>${escapeHtml(titleText)}</h3>
           <div style="display:flex; align-items:center; gap:8px;">
             <span class="grade-pill ${gradeClass}">Grade ${grade}</span>
             <span style="font-size:0.75rem; color:var(--text-muted);">Model: ${escapeHtml(modelName)}</span>
@@ -439,7 +466,7 @@ function renderEvaluationReport(ev) {
       </div>
       <div class="message-meta">
         <span class="latency-pill">⚡ ${latency}</span>
-        <span>Zero-Shot Baseline</span>
+        <span>${escapeHtml(modeLabel)}</span>
       </div>
     </div>
   `;
@@ -453,11 +480,31 @@ function renderEvaluationReport(ev) {
 
   // 3. Category Progress Bars
   html += `<div class="category-bars-grid">`;
-  for (const [key, meta] of Object.entries(CATEGORY_META)) {
+  const activeCategoryKeys = Object.keys(catScores).length > 0
+    ? Object.keys(catScores)
+    : Object.keys(CATEGORY_META).slice(0, 5);
+
+  // Client-side consistency check: ensure category scores sum to headline score
+  const totalCatSum = activeCategoryKeys.reduce((acc, k) => acc + ((catScores[k] && catScores[k].score) || 0), 0);
+  const scaleRatio = (totalCatSum > 0 && score < totalCatSum) ? (score / totalCatSum) : 1;
+
+  for (const key of activeCategoryKeys) {
+    const meta = CATEGORY_META[key] || { label: key.replace(/_/g, " ").toUpperCase(), max: 25 };
     const catData = catScores[key] || { score: 0, max: meta.max };
-    const curScore = catData.score !== undefined ? catData.score : 0;
+    const rawCatScore = catData.score !== undefined ? catData.score : 0;
+    const curScore = scaleRatio < 1 ? Math.round(rawCatScore * scaleRatio) : rawCatScore;
     const maxScore = catData.max || meta.max;
-    const pct = catData.pct !== undefined ? catData.pct : Math.round((curScore / maxScore) * 100);
+    const pct = scaleRatio < 1 
+      ? Math.min(100, Math.round((curScore / maxScore) * 100))
+      : (catData.pct !== undefined ? catData.pct : Math.round((curScore / maxScore) * 100));
+
+    // Dynamic color gradient based on percentage so failing/degraded categories are visually distinct
+    let barGradient = "var(--accent-gradient)";
+    if (pct <= 35) {
+      barGradient = "linear-gradient(90deg, #ef4444, #f87171)";
+    } else if (pct <= 60) {
+      barGradient = "linear-gradient(90deg, #f59e0b, #fbbf24)";
+    }
 
     html += `
       <div class="cat-row">
@@ -466,7 +513,7 @@ function renderEvaluationReport(ev) {
           <span><strong>${curScore}</strong> / ${maxScore} pts (${pct}%)</span>
         </div>
         <div class="cat-bar-bg">
-          <div class="cat-bar-fill" style="width: ${Math.min(pct, 100)}%;"></div>
+          <div class="cat-bar-fill" style="width: ${Math.min(pct, 100)}%; background: ${barGradient};"></div>
         </div>
       </div>
     `;
