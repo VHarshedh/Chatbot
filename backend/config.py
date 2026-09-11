@@ -13,4 +13,8 @@ class Settings(BaseSettings):
     HPC_KEY_PATH: str = "~/.ssh/id_rsa"
     WORKSPACE_ROOT: str = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+    # GPU control: -1 = use all available GPU layers (default, uses AMD Radeon via ROCm/HIP),
+    # 0 = CPU-only mode. Override with NUM_GPU=0 environment variable to force CPU.
+    NUM_GPU: int = -1
+
 settings = Settings()

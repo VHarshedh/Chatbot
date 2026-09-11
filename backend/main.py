@@ -56,13 +56,18 @@ def read_root():
 
 @app.get("/api/model_info")
 def get_model_info():
-    """Returns active model and baseline evaluation status"""
+    """Returns active model, GPU mode, and baseline evaluation status"""
+    gpu_mode = "CPU-only" if settings.NUM_GPU == 0 else (
+        f"GPU (all layers)" if settings.NUM_GPU == -1 else f"GPU ({settings.NUM_GPU} layers)"
+    )
     return {
         "model_name": settings.MODEL_NAME,
         "ollama_base_url": settings.OLLAMA_BASE_URL,
         "mode": "single_shot",
         "tools_enabled": False,
         "rag_enabled": False,
+        "gpu_mode": gpu_mode,
+        "num_gpu": settings.NUM_GPU,
         "description": "Pure Single-Shot Prompt Evaluation Mode (Zero Tools / Zero RAG)"
     }
 
@@ -364,7 +369,13 @@ def delete_session(session_id: int):
 @app.on_event("startup")
 async def startup_event():
     init_db()
+    gpu_mode = "CPU-only (NUM_GPU=0)" if settings.NUM_GPU == 0 else (
+        "GPU — all layers (AMD Radeon via ROCm/HIP)" if settings.NUM_GPU == -1
+        else f"GPU — {settings.NUM_GPU} layers"
+    )
     print(f"Starting Scientific Computing API with active model: {settings.MODEL_NAME}")
+    print(f"Inference device: {gpu_mode}")
+    print(f"  To force CPU-only: set NUM_GPU=0 before starting (e.g. NUM_GPU=0 uvicorn ...)")
     print("Zero-Shot Script Generation & Accuracy Evaluation Engine active")
 
 if __name__ == "__main__":
