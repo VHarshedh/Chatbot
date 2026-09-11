@@ -265,21 +265,62 @@ function initConnectionCheck() {
   setInterval(checkHealth, 30000);
 }
 
-// ─── Scroll to Top ───────────────────────────────────────────────────────────
-function initScrollToTop() {
-  const btn = document.getElementById("scroll-top-btn");
-  if (!btn || !messagesContainer) return;
-  messagesContainer.addEventListener("scroll", () => {
-    if (messagesContainer.scrollTop > 400) {
-      btn.style.display = "flex";
-      btn.classList.add("visible");
+// ─── Scroll Management & Auto-Scroll Lock ──────────────────────────────────
+let isUserScrolledUp = false;
+
+function scrollToBottom(force = false) {
+  if (!messagesContainer) return;
+  if (force) {
+    isUserScrolledUp = false;
+  }
+  if (!isUserScrolledUp) {
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+  }
+}
+
+function initScrollManagement() {
+  const topBtn = document.getElementById("scroll-top-btn");
+  const bottomBtn = document.getElementById("scroll-bottom-btn");
+  if (!messagesContainer) return;
+
+  function handleScroll() {
+    const scrollBottom = messagesContainer.scrollHeight - messagesContainer.scrollTop - messagesContainer.clientHeight;
+    // If user scrolled up more than 90px from the bottom, lock auto-scroll
+    if (scrollBottom > 90) {
+      isUserScrolledUp = true;
+      if (bottomBtn) {
+        bottomBtn.style.display = "flex";
+        bottomBtn.classList.add("visible");
+      }
     } else {
-      btn.classList.remove("visible");
-      setTimeout(() => { if (!btn.classList.contains("visible")) btn.style.display = "none"; }, 300);
+      isUserScrolledUp = false;
+      if (bottomBtn) {
+        bottomBtn.classList.remove("visible");
+        setTimeout(() => { if (!bottomBtn.classList.contains("visible")) bottomBtn.style.display = "none"; }, 250);
+      }
     }
-  });
-  btn.addEventListener("click", () => {
+
+    // Scroll to Top button visibility
+    if (topBtn) {
+      if (messagesContainer.scrollTop > 350) {
+        topBtn.style.display = "flex";
+        topBtn.classList.add("visible");
+      } else {
+        topBtn.classList.remove("visible");
+        setTimeout(() => { if (!topBtn.classList.contains("visible")) topBtn.style.display = "none"; }, 250);
+      }
+    }
+  }
+
+  messagesContainer.addEventListener("scroll", handleScroll, { passive: true });
+
+  topBtn?.addEventListener("click", () => {
     messagesContainer.scrollTo({ top: 0, behavior: "smooth" });
+  });
+
+  bottomBtn?.addEventListener("click", () => {
+    isUserScrolledUp = false;
+    messagesContainer.scrollTo({ top: messagesContainer.scrollHeight, behavior: "smooth" });
   });
 }
 
@@ -466,7 +507,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   initSettingsDrawer();
   initKeyboardShortcuts();
   initConnectionCheck();
-  initScrollToTop();
+  initScrollManagement();
   initDraftRecovery();
   setupTextareaAutoGrow();
   setupEventListeners();
@@ -622,7 +663,7 @@ async function handleRunFlagshipEvaluation() {
 
   assistantItem.appendChild(bubble);
   chatThread.appendChild(assistantItem);
-  scrollToBottom();
+  scrollToBottom(true);
 
   const timerBadge = bubble.querySelector(".live-timer-badge");
   const thinkingDetails = bubble.querySelector(".thinking-details");
@@ -630,6 +671,9 @@ async function handleRunFlagshipEvaluation() {
   const thinkingContent = bubble.querySelector(".thinking-stream-content");
   const contentContainer = bubble.querySelector(".content-stream-container");
   const cursor = bubble.querySelector(".streaming-cursor");
+
+  contentContainer.innerHTML = getPrefillPlaceholderHtml(false);
+  let hasReceivedFirstToken = false;
 
   const startTime = Date.now();
   const timerInterval = setInterval(() => {
@@ -679,18 +723,26 @@ async function handleRunFlagshipEvaluation() {
           if (event.type === "session") {
             currentSessionId = event.session_id;
           } else if (event.type === "thinking") {
+            if (!hasReceivedFirstToken) {
+              hasReceivedFirstToken = true;
+              contentContainer.innerHTML = "";
+            }
             thinkingDetails.style.display = "block";
             thinkingAccumulated += event.delta;
             thinkingContent.innerHTML = renderThinkingBody(thinkingAccumulated);
             const words = thinkingAccumulated.split(/\s+/).filter(Boolean).length;
             thinkingWordCount.textContent = words;
-            scrollToBottom();
+            scrollToBottom(false);
           } else if (event.type === "content") {
+            if (!hasReceivedFirstToken) {
+              hasReceivedFirstToken = true;
+              contentContainer.innerHTML = "";
+            }
             contentAccumulated += event.delta;
             const isCodeUnclosed = ((contentAccumulated.match(/```/g) || []).length % 2 === 1);
             if (cursor) cursor.style.display = isCodeUnclosed ? "none" : "inline-block";
             contentContainer.innerHTML = renderMarkdown(contentAccumulated, true);
-            scrollToBottom();
+            scrollToBottom(false);
           } else if (event.type === "eval_complete") {
             finalEvalData = event;
           } else if (event.type === "done") {
@@ -703,7 +755,7 @@ async function handleRunFlagshipEvaluation() {
               thinkingDetails.open = false;
             }
             contentContainer.innerHTML = renderMarkdown(contentAccumulated, false);
-            scrollToBottom();
+            scrollToBottom(false);
           }
         } catch (err) {
           console.warn("SSE parse error in flagship eval:", err);
@@ -1167,7 +1219,7 @@ chatForm.addEventListener("submit", async (e) => {
 
   assistantItem.appendChild(bubble);
   chatThread.appendChild(assistantItem);
-  scrollToBottom();
+  scrollToBottom(true);
 
   const timerBadge = bubble.querySelector(".live-timer-badge");
   const agentTraceContainer = bubble.querySelector(".agent-trace-container");
@@ -1176,6 +1228,9 @@ chatForm.addEventListener("submit", async (e) => {
   const thinkingContent = bubble.querySelector(".thinking-stream-content");
   const contentContainer = bubble.querySelector(".content-stream-container");
   const cursor = bubble.querySelector(".streaming-cursor");
+
+  contentContainer.innerHTML = getPrefillPlaceholderHtml(isAgentic);
+  let hasReceivedFirstToken = false;
 
   const startTime = Date.now();
   const timerInterval = setInterval(() => {
@@ -1230,21 +1285,33 @@ chatForm.addEventListener("submit", async (e) => {
           if (event.type === "session") {
             currentSessionId = event.session_id;
           } else if (event.type === "agent_step") {
+            if (!hasReceivedFirstToken) {
+              hasReceivedFirstToken = true;
+              contentContainer.innerHTML = "";
+            }
             renderAgentTraceStep(agentTraceContainer, event);
-            scrollToBottom();
+            scrollToBottom(false);
           } else if (event.type === "thinking") {
+            if (!hasReceivedFirstToken) {
+              hasReceivedFirstToken = true;
+              contentContainer.innerHTML = "";
+            }
             thinkingDetails.style.display = "block";
             thinkingAccumulated += event.delta;
             thinkingContent.innerHTML = renderThinkingBody(thinkingAccumulated);
             const words = thinkingAccumulated.split(/\s+/).filter(Boolean).length;
             thinkingWordCount.textContent = words;
-            scrollToBottom();
+            scrollToBottom(false);
           } else if (event.type === "content") {
+            if (!hasReceivedFirstToken) {
+              hasReceivedFirstToken = true;
+              contentContainer.innerHTML = "";
+            }
             contentAccumulated += event.delta;
             const isCodeUnclosed = ((contentAccumulated.match(/```/g) || []).length % 2 === 1);
             if (cursor) cursor.style.display = isCodeUnclosed ? "none" : "inline-block";
             contentContainer.innerHTML = renderMarkdown(contentAccumulated, true);
-            scrollToBottom();
+            scrollToBottom(false);
           } else if (event.type === "done") {
             clearInterval(timerInterval);
             if (cursor) cursor.remove();
@@ -1270,7 +1337,7 @@ chatForm.addEventListener("submit", async (e) => {
             bubble.appendChild(metaDiv);
 
             await loadSessions();
-            scrollToBottom();
+            scrollToBottom(false);
           } else if (event.type === "error") {
             clearInterval(timerInterval);
             if (cursor) cursor.remove();
@@ -1356,8 +1423,24 @@ function showTypingIndicator() {
   return item;
 }
 
-function scrollToBottom() {
-  messagesContainer.scrollTop = messagesContainer.scrollHeight;
+// Helper to generate an informative prefill status placeholder while model ingests prompt tokens
+function getPrefillPlaceholderHtml(isAgentic = false) {
+  const deviceBadge = document.getElementById("drawer-compute-device")?.textContent?.trim() || "";
+  const isCpu = deviceBadge.toLowerCase().includes("cpu");
+  const deviceText = isCpu ? "CPU Mode" : "GPU Mode";
+  const desc = isCpu
+    ? "Ingesting prompt context on CPU. In CPU-only mode, ingesting a large context prompt (4,000+ tokens) takes 1–2 minutes before the first token streams."
+    : (isAgentic ? "Analyzing query, retrieving knowledge from ChromaDB/Kùzu, and assembling context..." : "Ingesting prompt context into AMD Radeon GPU memory...");
+
+  return `
+    <div class="prefill-status-container" id="prefill-status-indicator">
+      <div class="prefill-spinner"></div>
+      <div class="prefill-text">
+        <div class="prefill-title">⚡ ${deviceText} • Ingesting Context...</div>
+        <div class="prefill-desc">${desc}</div>
+      </div>
+    </div>
+  `;
 }
 
 // Render formatted text and KaTeX math formulas inside thinking details blocks
