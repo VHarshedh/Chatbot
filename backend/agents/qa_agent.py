@@ -14,8 +14,10 @@ class QAAgent:
         context = self.retriever.retrieve(question)
         
         # 2. Build prompt
-        prompt = f"""You are a scientific computing assistant. Use the following context to answer the question.
-If the answer is not in the context, you can use your own knowledge but clarify that.
+        prompt = f"""You are a scientific computing assistant. Get straight to the point and do not beat around the bush.
+Provide direct, concise, and accurate answers with no conversational filler or preamble.
+Use the following context to answer the question.
+If the answer is not in the context, you can use your own knowledge but clarify that directly.
 
 Context:
 {context}

@@ -7,11 +7,30 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from backend.config import settings
+import uuid
 from backend.agents.baseline_agent import SingleShotAgent
 from backend.agents.agentic_agent import AgenticRAGAgent
 from backend.evaluation.script_evaluator import ScriptEvaluator
-from backend.db.models import execute_query, insert_session, insert_evaluation, get_evaluations
+from backend.db.models import (
+    execute_query,
+    insert_session,
+    insert_evaluation,
+    get_evaluations,
+    INTERFACIAL_ANALYSIS_BENCHMARK_PROMPT,
+    get_prompts,
+    get_prompt_by_id,
+    insert_prompt,
+    update_prompt,
+    delete_prompt,
+    reset_prompts
+)
 from backend.db.migrations import init_db
+from backend.notebooks.attach_to_notebook import (
+    attach_script_to_notebook,
+    get_latest_evaluation_code,
+    extract_notebook_context,
+    format_notebook_context_prompt
+)
 
 app = FastAPI(title="Scientific Computing Chatbox API", version="1.0.0")
 
@@ -20,31 +39,38 @@ FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 FRONTEND_DIR.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
-INTERFACIAL_ANALYSIS_BENCHMARK_PROMPT = (
-    "Write a complete, self-contained scientific Python script using ASE, NumPy, and Matplotlib to analyze "
-    "an interfacial metal-oxide/water system (template: IrO2/H2O) from DeepMD .extxyz trajectories across multiple DP models. "
-    "Your script must:\n"
-    "1. Classify surface metal atoms (M_sur from topmost z-layer), bulk vs water oxygens (O_bulk vs O_w via stoichiometry), "
-    "coordinatively unsaturated metal sites (CUS), and adsorbed vs bridge oxygens (O_adb, O_br).\n"
-    "2. Compute water mass density profiles along the z-axis (g/cm^3) and pair radial distribution functions (RDFs: M_cus-O_w, O_br-H_w, O_br-O_w).\n"
-    "3. Track surface hydroxylation / dissociation fractions (OH vs intact H2O) using neighbor distance cutoffs (~1.2 A), and compute the water survival probability P(t) over log-spaced time lags tau via continuous set intersections.\n"
-    "4. Loop over multiple DP models, computing the cross-model mean and standard deviation (mean +/- std).\n"
-    "5. Save individual plots for density, RDF, survival, and fraction, as well as a combined 2x2 multi-panel summary presentation figure (full_analysis_presentation.png).\n"
-    "6. Write a summary_report.txt file with average residence times (integrated from P(t)) and dissociated/molecular fractions.\n"
-    "Output only the complete Python code block."
-)
-
 class ChatRequest(BaseModel):
     message: str
     session_id: Optional[int] = None
     system_prompt: Optional[str] = None
     mode: Optional[str] = "single_shot"
+    include_notebook_context: Optional[bool] = None
+    notebook_name: Optional[str] = "running.ipynb"
+    images: Optional[List[str]] = None
 
 class SessionCreateRequest(BaseModel):
     title: Optional[str] = "New Session"
 
 class EvaluationRequest(BaseModel):
     session_id: Optional[int] = None
+    prompt: Optional[str] = None
+    notebook_name: Optional[str] = "running.ipynb"
+    include_notebook_context: Optional[bool] = True
+
+class NotebookAttachRequest(BaseModel):
+    code: Optional[str] = None
+    notebook_name: Optional[str] = "running.ipynb"
+    replace_placeholder: Optional[bool] = True
+
+class PromptCreateRequest(BaseModel):
+    id: Optional[str] = None
+    title: str
+    domain: str
+    prompt: str
+
+class PromptUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    domain: Optional[str] = None
     prompt: Optional[str] = None
 
 @app.get("/")
@@ -75,73 +101,128 @@ def get_model_info():
 @app.get("/api/benchmark_prompts")
 def get_benchmark_prompts():
     """Curated domain prompts to benchmark Gemma4 single-shot accuracy"""
-    return [
-        {
-            "id": "interfacial_script_gen",
-            "domain": "Interfacial Script Evaluation",
-            "title": "Full Interfacial Analysis Script Generator",
-            "prompt": INTERFACIAL_ANALYSIS_BENCHMARK_PROMPT
-        },
-        {
-            "id": "dft_cutoff",
-            "domain": "DFT",
-            "title": "Pt SCF Convergence Parameters",
-            "prompt": "What are the recommended plane-wave kinetic energy cutoff (ecutwfc) and charge density cutoff (ecutrho) for Platinum (Pt) using a PBE PAW or ONCV pseudopotential in Quantum ESPRESSO? Please write a sample &SYSTEM namelist block."
-        },
-        {
-            "id": "md_chaining",
-            "domain": "Molecular Dynamics",
-            "title": "DeePMD LAMMPS Interface Script",
-            "prompt": "Write a minimal LAMMPS in.lammps input script for an NVT production run of an interfacial water system driven by a pair_style deepmd potential. Include velocity creation, thermostatting at 300K, and periodic restart writes."
-        },
-        {
-            "id": "training_format",
-            "domain": "DeepMD Training",
-            "title": "Raw Data to Binary Sets",
-            "prompt": "In DeePMD-kit, what is the exact layout of raw data files (coord.raw, box.raw, energy.raw, force.raw) and how are they converted into set.000 numpy binary datasets for training?"
-        },
-        {
-            "id": "analysis_kinetics",
-            "domain": "Interfacial Analysis",
-            "title": "Surface Sites & Survival Probability",
-            "prompt": "Explain how coordinatively unsaturated (CUS) metal sites and adsorbed water oxygens (O_adb) are structurally classified on a metal oxide surface, and write the mathematical definition of the water survival probability P(t)."
-        }
-    ]
+    return get_prompts()
+
+@app.post("/api/benchmark_prompts")
+def create_benchmark_prompt(request: PromptCreateRequest):
+    """Create a new benchmark or custom evaluation prompt"""
+    title = request.title.strip()
+    domain = request.domain.strip()
+    prompt_text = request.prompt.strip()
+    if not title or not domain or not prompt_text:
+        raise HTTPException(status_code=400, detail="Title, domain, and prompt text are required.")
+    
+    prompt_id = request.id.strip() if request.id and request.id.strip() else f"prompt_{uuid.uuid4().hex[:8]}"
+    existing = get_prompt_by_id(prompt_id)
+    if existing:
+        raise HTTPException(status_code=409, detail=f"Prompt with id '{prompt_id}' already exists.")
+    
+    created = insert_prompt(prompt_id=prompt_id, title=title, domain=domain, prompt=prompt_text, is_default=0)
+    return created
+
+@app.get("/api/benchmark_prompts/{prompt_id}")
+def get_benchmark_prompt_by_id(prompt_id: str):
+    """Retrieve a single prompt by its identifier"""
+    prompt = get_prompt_by_id(prompt_id)
+    if not prompt:
+        raise HTTPException(status_code=404, detail="Prompt not found")
+    return prompt
+
+@app.put("/api/benchmark_prompts/{prompt_id}")
+def update_benchmark_prompt(prompt_id: str, request: PromptUpdateRequest):
+    """Update an existing prompt's title, domain, or instructions"""
+    existing = get_prompt_by_id(prompt_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Prompt not found")
+    
+    updated = update_prompt(
+        prompt_id=prompt_id,
+        title=request.title.strip() if request.title is not None else None,
+        domain=request.domain.strip() if request.domain is not None else None,
+        prompt=request.prompt.strip() if request.prompt is not None else None
+    )
+    return updated
+
+@app.delete("/api/benchmark_prompts/{prompt_id}")
+def delete_benchmark_prompt(prompt_id: str):
+    """Delete a prompt by its identifier"""
+    success = delete_prompt(prompt_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Prompt not found")
+    return {"status": "success", "message": f"Prompt '{prompt_id}' deleted successfully.", "id": prompt_id}
+
+@app.post("/api/benchmark_prompts/reset")
+def reset_benchmark_prompts_endpoint():
+    """Reset benchmark prompts back to factory defaults"""
+    restored = reset_prompts()
+    return {"status": "success", "message": "Benchmark prompts reset to factory defaults.", "prompts": restored}
 
 @app.post("/api/chat")
 def chat_endpoint(request: ChatRequest):
     """Executes single-shot or agentic RAG generation and logs the conversation"""
-    if not request.message.strip():
-        raise HTTPException(status_code=400, detail="Message cannot be empty.")
+    has_text = bool(request.message and request.message.strip())
+    has_images = bool(request.images and len(request.images) > 0)
+    if not has_text and not has_images:
+        raise HTTPException(status_code=400, detail="Message or attached image cannot be empty.")
 
     if request.mode in ["agentic", "agentic_rag"]:
         agent = AgenticRAGAgent()
     else:
         agent = SingleShotAgent()
 
+    raw_text = request.message.strip() if has_text else "Please analyze this attached scientific image / structure for materials science insights."
+    user_msg = raw_text
+    if request.include_notebook_context is True or (
+        request.include_notebook_context is None and any(kw in user_msg.lower() for kw in ["running.ipynb", "notebook", "extxyz", "traj", "anatase", "density profile", "survival probability", "simulation script"])
+    ):
+        try:
+            nb_name = request.notebook_name or "running.ipynb"
+            nb_path = Path(__file__).parent / "notebooks" / nb_name
+            nb_ctx = extract_notebook_context(str(nb_path))
+            user_msg = f"{format_notebook_context_prompt(nb_ctx)}\n\n--- USER REQUEST ---\n{raw_text}"
+        except Exception:
+            pass
+
     result = agent.chat(
-        user_message=request.message,
+        user_message=user_msg,
         session_id=request.session_id,
-        system_prompt=request.system_prompt
+        system_prompt=request.system_prompt,
+        images=request.images
     )
     return result
 
 @app.post("/api/chat/stream")
 def chat_stream_endpoint(request: ChatRequest):
     """Executes single-shot or agentic RAG generation with live SSE token streaming"""
-    if not request.message.strip():
-        raise HTTPException(status_code=400, detail="Message cannot be empty.")
+    has_text = bool(request.message and request.message.strip())
+    has_images = bool(request.images and len(request.images) > 0)
+    if not has_text and not has_images:
+        raise HTTPException(status_code=400, detail="Message or attached image cannot be empty.")
 
     if request.mode in ["agentic", "agentic_rag"]:
         agent = AgenticRAGAgent()
     else:
         agent = SingleShotAgent()
 
+    raw_text = request.message.strip() if has_text else "Please analyze this attached scientific image / structure for materials science insights."
+    user_msg = raw_text
+    if request.include_notebook_context is True or (
+        request.include_notebook_context is None and any(kw in user_msg.lower() for kw in ["running.ipynb", "notebook", "extxyz", "traj", "anatase", "density profile", "survival probability", "simulation script"])
+    ):
+        try:
+            nb_name = request.notebook_name or "running.ipynb"
+            nb_path = Path(__file__).parent / "notebooks" / nb_name
+            nb_ctx = extract_notebook_context(str(nb_path))
+            user_msg = f"{format_notebook_context_prompt(nb_ctx)}\n\n--- USER REQUEST ---\n{raw_text}"
+        except Exception:
+            pass
+
     return StreamingResponse(
         agent.chat_stream(
-            user_message=request.message,
+            user_message=user_msg,
             session_id=request.session_id,
-            system_prompt=request.system_prompt
+            system_prompt=request.system_prompt,
+            images=request.images
         ),
         media_type="text/event-stream",
         headers={
@@ -155,18 +236,36 @@ def chat_stream_endpoint(request: ChatRequest):
 def evaluate_zero_shot_stream_endpoint(request: EvaluationRequest):
     """
     Executes Interfacial Water Analysis zero-shot benchmark on Gemma4 with live token streaming,
-    extracts code, runs accuracy evaluator, stores in SQLite, and emits the final report card.
+    grounded on the running.ipynb execution context.
+    Extracts code, runs accuracy evaluator, stores in SQLite, and emits the final report card.
     """
-    prompt = request.prompt.strip() if (request.prompt and request.prompt.strip()) else INTERFACIAL_ANALYSIS_BENCHMARK_PROMPT
+    nb_name = request.notebook_name or "running.ipynb"
+    nb_path = Path(__file__).parent / "notebooks" / nb_name
+    nb_context = None
+    nb_prompt_prefix = ""
+
+    if request.include_notebook_context is not False:
+        try:
+            nb_context = extract_notebook_context(str(nb_path))
+            nb_prompt_prefix = format_notebook_context_prompt(nb_context) + "\n\n--- BENCHMARK TASK ---\n"
+        except Exception as e:
+            print(f"Notice: Could not load notebook context from {nb_path}: {e}")
+
+    base_prompt = request.prompt.strip() if (request.prompt and request.prompt.strip()) else INTERFACIAL_ANALYSIS_BENCHMARK_PROMPT
+    full_prompt = f"{nb_prompt_prefix}{base_prompt}" if nb_prompt_prefix else base_prompt
+
     agent = SingleShotAgent()
     system_prompt = (
         "You are an expert computational materials scientist and Python developer. "
+        "You are generating a script to be attached directly to the user's Jupyter notebook `running.ipynb`. "
+        "Ground your script strictly on the pre-loaded variables, trajectory files, and environment of `running.ipynb`. "
+        "Get straight to the point and do not beat around the bush. Provide no conversational fluff or preamble. "
         "Write complete, working, syntactically correct Python code blocks using ASE, NumPy, and Matplotlib."
     )
 
     def stream_generator():
         stream = agent.chat_stream(
-            user_message=prompt,
+            user_message=full_prompt,
             session_id=request.session_id,
             system_prompt=system_prompt
         )
@@ -194,12 +293,12 @@ def evaluate_zero_shot_stream_endpoint(request: EvaluationRequest):
         # Evaluate the completed script
         if full_response_text:
             evaluator = ScriptEvaluator()
-            evaluation = evaluator.evaluate(full_response_text, prompt=prompt)
+            evaluation = evaluator.evaluate(full_response_text, prompt=base_prompt, notebook_context=nb_context)
 
             eval_id = insert_evaluation(
                 session_id=session_id,
                 model_name=settings.MODEL_NAME,
-                prompt=prompt,
+                prompt=base_prompt,
                 generated_code=evaluation["extracted_code"],
                 score=evaluation["score"],
                 grade=evaluation["grade"],
@@ -212,12 +311,23 @@ def evaluate_zero_shot_stream_endpoint(request: EvaluationRequest):
                 latency_seconds=latency_seconds
             )
 
+            notebook_attach_result = None
+            if evaluation.get("extracted_code"):
+                try:
+                    notebook_attach_result = attach_script_to_notebook(
+                        code=evaluation["extracted_code"],
+                        notebook_path=str(nb_path),
+                        replace_placeholder=True
+                    )
+                except Exception as e:
+                    notebook_attach_result = {"status": "error", "error": str(e)}
+
             eval_event = {
                 "type": "eval_complete",
                 "evaluation_id": eval_id,
                 "session_id": session_id,
                 "model": settings.MODEL_NAME,
-                "prompt": prompt,
+                "prompt": base_prompt,
                 "generated_code": evaluation["extracted_code"],
                 "raw_response": full_response_text,
                 "score": evaluation["score"],
@@ -228,7 +338,9 @@ def evaluate_zero_shot_stream_endpoint(request: EvaluationRequest):
                 "summary": evaluation["summary"],
                 "evaluation_type": evaluation.get("evaluation_type", "rag_benchmark"),
                 "domain": evaluation.get("domain"),
-                "latency_seconds": latency_seconds
+                "latency_seconds": latency_seconds,
+                "notebook_attached": notebook_attach_result,
+                "notebook_context": nb_context
             }
             yield f"data: {json.dumps(eval_event)}\n\n"
 
@@ -245,20 +357,36 @@ def evaluate_zero_shot_stream_endpoint(request: EvaluationRequest):
 @app.post("/api/evaluate_zero_shot")
 def evaluate_zero_shot_endpoint(request: EvaluationRequest):
     """
-    Executes the Interfacial Water Analysis zero-shot prompt on Gemma4,
+    Executes the Interfacial Water Analysis zero-shot prompt on Gemma4 grounded on running.ipynb,
     extracts the Python script, runs the accuracy rubric evaluator,
     and stores the benchmark metrics in SQLite.
     """
-    prompt = request.prompt.strip() if (request.prompt and request.prompt.strip()) else INTERFACIAL_ANALYSIS_BENCHMARK_PROMPT
-    
+    nb_name = request.notebook_name or "running.ipynb"
+    nb_path = Path(__file__).parent / "notebooks" / nb_name
+    nb_context = None
+    nb_prompt_prefix = ""
+
+    if request.include_notebook_context is not False:
+        try:
+            nb_context = extract_notebook_context(str(nb_path))
+            nb_prompt_prefix = format_notebook_context_prompt(nb_context) + "\n\n--- BENCHMARK TASK ---\n"
+        except Exception as e:
+            print(f"Notice: Could not load notebook context from {nb_path}: {e}")
+
+    base_prompt = request.prompt.strip() if (request.prompt and request.prompt.strip()) else INTERFACIAL_ANALYSIS_BENCHMARK_PROMPT
+    full_prompt = f"{nb_prompt_prefix}{base_prompt}" if nb_prompt_prefix else base_prompt
+
     agent = SingleShotAgent()
     system_prompt = (
         "You are an expert computational materials scientist and Python developer. "
+        "You are generating a script to be attached directly to the user's Jupyter notebook `running.ipynb`. "
+        "Ground your script strictly on the pre-loaded variables, trajectory files, and environment of `running.ipynb`. "
+        "Get straight to the point and do not beat around the bush. Provide no conversational fluff or preamble. "
         "Write complete, working, syntactically correct Python code blocks using ASE, NumPy, and Matplotlib."
     )
-    
+
     chat_res = agent.chat(
-        user_message=prompt,
+        user_message=full_prompt,
         session_id=request.session_id,
         system_prompt=system_prompt
     )
@@ -271,12 +399,12 @@ def evaluate_zero_shot_endpoint(request: EvaluationRequest):
 
     raw_response = chat_res.get("response", "")
     evaluator = ScriptEvaluator()
-    evaluation = evaluator.evaluate(raw_response, prompt=prompt)
+    evaluation = evaluator.evaluate(raw_response, prompt=base_prompt, notebook_context=nb_context)
 
     eval_id = insert_evaluation(
         session_id=chat_res["session_id"],
         model_name=settings.MODEL_NAME,
-        prompt=prompt,
+        prompt=base_prompt,
         generated_code=evaluation["extracted_code"],
         score=evaluation["score"],
         grade=evaluation["grade"],
@@ -289,12 +417,23 @@ def evaluate_zero_shot_endpoint(request: EvaluationRequest):
         latency_seconds=chat_res.get("latency_seconds", 0.0)
     )
 
+    notebook_attach_result = None
+    if evaluation.get("extracted_code"):
+        try:
+            notebook_attach_result = attach_script_to_notebook(
+                code=evaluation["extracted_code"],
+                notebook_path=str(nb_path),
+                replace_placeholder=True
+            )
+        except Exception as e:
+            notebook_attach_result = {"status": "error", "error": str(e)}
+
     return {
         "status": "success",
         "evaluation_id": eval_id,
         "session_id": chat_res["session_id"],
         "model": settings.MODEL_NAME,
-        "prompt": prompt,
+        "prompt": base_prompt,
         "generated_code": evaluation["extracted_code"],
         "raw_response": raw_response,
         "score": evaluation["score"],
@@ -303,8 +442,54 @@ def evaluate_zero_shot_endpoint(request: EvaluationRequest):
         "passed_checks": evaluation["passed_checks"],
         "failed_checks": evaluation["failed_checks"],
         "summary": evaluation["summary"],
-        "latency_seconds": chat_res.get("latency_seconds", 0.0)
+        "latency_seconds": chat_res.get("latency_seconds", 0.0),
+        "notebook_attached": notebook_attach_result,
+        "notebook_context": nb_context
     }
+
+@app.get("/api/notebooks/context")
+def get_notebook_context_endpoint(notebook_name: Optional[str] = "running.ipynb"):
+    """
+    Retrieves the extracted execution context, environment, and pre-loaded state of running.ipynb.
+    Allows frontend and callers to inspect the notebook context provided to Gemma.
+    """
+    nb_name = notebook_name or "running.ipynb"
+    nb_path = Path(__file__).parent / "notebooks" / nb_name
+    try:
+        ctx = extract_notebook_context(str(nb_path))
+        return {
+            "status": "success",
+            "notebook_name": nb_name,
+            "context": ctx,
+            "formatted_prompt": format_notebook_context_prompt(ctx)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to extract notebook context: {e}")
+
+@app.post("/api/notebooks/attach")
+def attach_notebook_endpoint(request: NotebookAttachRequest):
+    """
+    Attaches a Python script (or the latest generated script from evaluations)
+    to the target Colab notebook (running.ipynb).
+    """
+    code = request.code
+    if not code:
+        code = get_latest_evaluation_code()
+    if not code:
+        raise HTTPException(status_code=400, detail="No code provided and no recent evaluation found in database.")
+
+    nb_name = request.notebook_name or "running.ipynb"
+    nb_path = Path(__file__).parent / "notebooks" / nb_name
+    try:
+        res = attach_script_to_notebook(
+            code=code,
+            notebook_path=str(nb_path),
+            replace_placeholder=request.replace_placeholder if request.replace_placeholder is not None else True
+        )
+        return res
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to attach script to notebook: {e}")
+
 
 @app.get("/api/evaluations")
 def list_evaluations():
@@ -362,7 +547,7 @@ def list_sessions():
 def get_session_messages(session_id: int):
     """Retrieves all messages for a specific session"""
     rows = execute_query(
-        "SELECT id, role, content, timestamp, agent_used, tool_calls_json FROM messages WHERE session_id = ? ORDER BY id ASC",
+        "SELECT id, role, content, timestamp, agent_used, tool_calls_json, images_json FROM messages WHERE session_id = ? ORDER BY id ASC",
         (session_id,)
     )
     return [
@@ -372,7 +557,8 @@ def get_session_messages(session_id: int):
             "content": row["content"],
             "timestamp": row["timestamp"],
             "agent_used": row["agent_used"],
-            "tool_calls_json": row.get("tool_calls_json") if hasattr(row, "get") else None
+            "tool_calls_json": row.get("tool_calls_json") if hasattr(row, "get") else None,
+            "images_json": row.get("images_json") if hasattr(row, "get") else None
         }
         for row in rows
     ]

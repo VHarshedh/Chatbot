@@ -175,7 +175,7 @@ class AstAnalyzer:
         "True", "False", "None", "self", "cls", "get_ipython"
     }
 
-    def find_undefined_symbols(self) -> Set[str]:
+    def find_undefined_symbols(self, allowed_symbols: Optional[Set[str]] = None) -> Set[str]:
         """
         Detects variables, modules, or functions that are referenced but never
         imported, assigned, or defined anywhere in the script.
@@ -184,6 +184,8 @@ class AstAnalyzer:
             return set()
 
         defined_names: Set[str] = set(self.BUILTIN_NAMES)
+        if allowed_symbols:
+            defined_names.update(allowed_symbols)
         loaded_names: Set[str] = set()
 
         # Collect all defined symbols (imports, defs, classes, assigns, args, loop targets)
@@ -227,13 +229,13 @@ class AstAnalyzer:
         # Filter private or internal conventions
         return {u for u in undefined if not u.startswith("_")}
 
-    def analyze(self) -> Dict[str, Any]:
+    def analyze(self, allowed_symbols: Optional[Set[str]] = None) -> Dict[str, Any]:
         """Provides a comprehensive AST inspection report."""
         imports = self.extract_imports()
         functions = self.extract_functions()
         safety = self.check_safety()
         patterns = self.detect_computational_patterns()
-        undefined_symbols = self.find_undefined_symbols()
+        undefined_symbols = self.find_undefined_symbols(allowed_symbols=allowed_symbols)
 
         return {
             "syntax_valid": self.syntax_valid,

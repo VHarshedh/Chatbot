@@ -1,15 +1,17 @@
+import re
 import time
 import json
 import requests
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from backend.config import settings
 from backend.db.models import insert_session, insert_message, execute_query
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are an expert computational materials scientist and chemist. "
-    "Provide clear, accurate, and scientifically rigorous answers. "
-    "When asked for simulation scripts (such as Quantum ESPRESSO, LAMMPS, or DeePMD), "
-    "provide clean, syntactically correct input files and explain the underlying physics."
+    "Get straight to the point and do not beat around the bush. "
+    "Provide clear, concise, and scientifically rigorous answers with zero filler, conversational fluff, or preamble. "
+    "When asked for simulation scripts (such as ASE, Quantum ESPRESSO, LAMMPS, or DeePMD), "
+    "provide clean, syntactically correct, and complete code blocks immediately."
 )
 
 class SingleShotAgent:
@@ -22,7 +24,27 @@ class SingleShotAgent:
         self.model = model or settings.MODEL_NAME
         self.base_url = base_url or settings.OLLAMA_BASE_URL
 
-    def generate_response(self, prompt: str, system_prompt: Optional[str] = None) -> Dict[str, Any]:
+    @staticmethod
+    def _clean_images(images: Optional[List[str]]) -> Optional[List[str]]:
+        if not images:
+            return None
+        cleaned = []
+        for img in images:
+            if not isinstance(img, str):
+                continue
+            img = img.strip()
+            if "," in img and ";base64" in img:
+                cleaned.append(img.split(",", 1)[1])
+            elif img:
+                cleaned.append(img)
+        return cleaned if cleaned else None
+
+    def generate_response(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        images: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
         """
         Directly queries the Ollama /api/chat endpoint with no tool or RAG intervention.
         Streams chunks with num_ctx=4096 and timeout=(10, 600) to prevent read timeouts on CPU reasoning.
@@ -33,7 +55,11 @@ class SingleShotAgent:
         messages = []
         if sys_prompt:
             messages.append({"role": "system", "content": sys_prompt})
-        messages.append({"role": "user", "content": prompt})
+        user_msg = {"role": "user", "content": prompt}
+        cleaned_imgs = self._clean_images(images)
+        if cleaned_imgs:
+            user_msg["images"] = cleaned_imgs
+        messages.append(user_msg)
 
         payload = {
             "model": self.model,
@@ -99,6 +125,22 @@ class SingleShotAgent:
             content = "".join(content_parts).strip()
             latency = round(time.time() - start_time, 3)
 
+            # Automatically attach script to Colab running.ipynb if Python code block is present
+            code_match = re.search(r"```(?:python)?\s*([\s\S]*?)```", content)
+            if code_match:
+                extracted = code_match.group(1).strip()
+                if extracted and len(extracted.splitlines()) >= 3:
+                    try:
+                        from backend.notebooks.attach_to_notebook import attach_script_to_notebook
+                        nb_res = attach_script_to_notebook(extracted)
+                        content += (
+                            f"\n\n---\n\n"
+                            f"📓 **Colab Notebook Ready**: This script has been automatically attached to cell #{nb_res['target_cell_index'] + 1} "
+                            f"in `ChatBot/backend/notebooks/running.ipynb`. You can now open and run the notebook in Google Colab (or on Kaggle with T4x2 GPU)!"
+                        )
+                    except Exception:
+                        pass
+
             if content and thinking:
                 final_text = f"<details class=\"thinking-details\"><summary><em>Thinking Process ({len(thinking.split())} words)</em></summary>\n\n{thinking}\n</details>\n\n{content}"
             elif content:
@@ -136,7 +178,13 @@ class SingleShotAgent:
                 "mode": "single_shot"
             }
 
-    def chat(self, user_message: str, session_id: Optional[int] = None, system_prompt: Optional[str] = None) -> Dict[str, Any]:
+    def chat(
+        self,
+        user_message: str,
+        session_id: Optional[int] = None,
+        system_prompt: Optional[str] = None,
+        images: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
         """
         Processes a chat turn, tracks session history in SQLite, and returns the response.
         """
@@ -145,16 +193,17 @@ class SingleShotAgent:
             title = user_message[:40] + ("..." if len(user_message) > 40 else "")
             session_id = insert_session(title=title)
 
-        # Log user message
+        # Log user message with images
         insert_message(
             session_id=session_id,
             role="user",
             content=user_message,
-            agent_used="SingleShotAgent"
+            agent_used="SingleShotAgent",
+            images_json=json.dumps(images) if images else None
         )
 
         # Generate direct single-shot response
-        result = self.generate_response(user_message, system_prompt=system_prompt)
+        result = self.generate_response(user_message, system_prompt=system_prompt, images=images)
 
         # Log assistant message
         if result["status"] == "success":
@@ -168,7 +217,13 @@ class SingleShotAgent:
         result["session_id"] = session_id
         return result
 
-    def chat_stream(self, user_message: str, session_id: Optional[int] = None, system_prompt: Optional[str] = None):
+    def chat_stream(
+        self,
+        user_message: str,
+        session_id: Optional[int] = None,
+        system_prompt: Optional[str] = None,
+        images: Optional[List[str]] = None
+    ):
         """
         Streams a chat response token-by-token via Server-Sent Events (SSE) format: data: {...}\n\n
         Persists user and assistant messages in SQLite upon stream completion.
@@ -182,7 +237,8 @@ class SingleShotAgent:
             session_id=session_id,
             role="user",
             content=user_message,
-            agent_used="SingleShotAgent"
+            agent_used="SingleShotAgent",
+            images_json=json.dumps(images) if images else None
         )
 
         yield f"data: {json.dumps({'type': 'session', 'session_id': session_id, 'model': self.model})}\n\n"
@@ -191,7 +247,11 @@ class SingleShotAgent:
         messages = []
         if sys_prompt:
             messages.append({"role": "system", "content": sys_prompt})
-        messages.append({"role": "user", "content": user_message})
+        user_msg = {"role": "user", "content": user_message}
+        cleaned_imgs = self._clean_images(images)
+        if cleaned_imgs:
+            user_msg["images"] = cleaned_imgs
+        messages.append(user_msg)
 
         payload = {
             "model": self.model,
@@ -265,6 +325,25 @@ class SingleShotAgent:
             latency = round(time.time() - start_time, 3)
             thinking = "".join(thinking_parts).strip()
             content = "".join(content_parts).strip()
+
+            # Automatically attach script to Colab running.ipynb if Python code block is present
+            code_match = re.search(r"```(?:python)?\s*([\s\S]*?)```", content)
+            notebook_info = None
+            if code_match:
+                extracted = code_match.group(1).strip()
+                if extracted and len(extracted.splitlines()) >= 3:
+                    try:
+                        from backend.notebooks.attach_to_notebook import attach_script_to_notebook
+                        notebook_info = attach_script_to_notebook(extracted)
+                        notice = (
+                            f"\n\n---\n\n"
+                            f"📓 **Colab Notebook Ready**: This script has been automatically attached to cell #{notebook_info['target_cell_index'] + 1} "
+                            f"in `ChatBot/backend/notebooks/running.ipynb`. You can now open and run the notebook in Google Colab (or on Kaggle with T4x2 GPU)!"
+                        )
+                        content += notice
+                        yield f"data: {json.dumps({'type': 'content', 'delta': notice})}\n\n"
+                    except Exception as e:
+                        notebook_info = {"status": "error", "error": str(e)}
 
             if content and thinking:
                 final_text = f"<details class=\"thinking-details\"><summary><em>Thinking Process ({len(thinking.split())} words)</em></summary>\n\n{thinking}\n</details>\n\n{content}"

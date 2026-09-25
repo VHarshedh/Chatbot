@@ -193,10 +193,10 @@ class BenchmarkEvaluator:
             )
         }
 
-    def evaluate(self, code: str, raw_response: str) -> Dict[str, Any]:
+    def evaluate(self, code: str, raw_response: str, notebook_context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Evaluates a script across the 5 flagship benchmark categories (100 pts total).
-        
+        Supports grounding against running.ipynb execution context (Anatase TiO2 / water).
         Strict mode: finer-grained sub-checks, tighter tolerances, severity-tiered caps.
         """
         if not code:
@@ -205,6 +205,7 @@ class BenchmarkEvaluator:
                 "grade": "F",
                 "extracted_code": "",
                 "reference_notebook": self.REFERENCE_NOTEBOOK,
+                "notebook_context": notebook_context,
                 "category_scores": {
                     "syntax_and_imports": {"score": 0, "max": 15, "pct": 0},
                     "site_identification": {"score": 0, "max": 20, "pct": 0},
@@ -223,7 +224,7 @@ class BenchmarkEvaluator:
         failed: List[str] = []
 
         # =====================================================================
-        # 1. Syntax & Core Imports (15 pts) [Notebook Cell 00]
+        # 1. Syntax & Core Imports (15 pts) [Notebook Cell 00 / running.ipynb]
         # =====================================================================
         cat1_score = 0
         has_syntax_error = False
@@ -235,18 +236,18 @@ class BenchmarkEvaluator:
             has_syntax_error = True
             failed.append(f"CRITICAL: Syntax error: {e.msg} at line {e.lineno}")
 
-        # Specific ase.io import (not just generic ase)
-        has_ase_io = bool(re.search(r"\b(from\s+ase\.io\s+import|from\s+ase\s+import\s+io|ase\.io\.read)", code))
-        has_ase_generic = bool(re.search(r"\b(import\s+ase|from\s+ase)\b", code))
+        # Specific ase.io import or pre-loaded traj integration from running.ipynb
+        has_ase_io = bool(re.search(r"\b(from\s+ase\.io\s+import|from\s+ase\s+import\s+io|ase\.io\.read|read\s*\(|traj\b)", code))
+        has_ase_generic = bool(re.search(r"\b(import\s+ase|from\s+ase|ase\b)\b", code))
         if has_ase_io:
             cat1_score += 3
-            passed.append("Imported ASE I/O module for trajectory reading (ase.io.read, Notebook Cell 00).")
+            passed.append("ASE I/O or pre-loaded trajectory `traj` integration detected (Notebook Cell 00 / running.ipynb).")
         elif has_ase_generic:
             cat1_score += 1
             passed.append("Generic ASE import detected (missing specific ase.io submodule import).")
             failed.append("Missing specific `from ase.io import read` for trajectory loading (Notebook Cell 00).")
         else:
-            failed.append("CRITICAL: Missing ASE import entirely — cannot load atomic structures (Notebook Cell 00).")
+            failed.append("CRITICAL: Missing ASE import or `traj` usage entirely — cannot load atomic structures (Notebook Cell 00).")
 
         # Specific ase.neighborlist import
         has_ase_neighborlist = bool(re.search(r"\b(from\s+ase\.neighborlist|from\s+ase\s+import.*neighborlist|neighbor_list)", code))
@@ -278,7 +279,7 @@ class BenchmarkEvaluator:
         cat2_score = 0
 
         # Surface metal identification with z-coordinate logic
-        has_msur = bool(re.search(r"(m_sur|surface_metal|topmost|max\s*\([^)]*z|z\s*>\s*|z_coord|m_z)", code, re.IGNORECASE))
+        has_msur = bool(re.search(r"(m_sur|surface_metal|topmost|max\s*\([^)]*z|z\s*>\s*|z_coord|m_z|ti_sur|surface_ti|ti\b|titanium)", code, re.IGNORECASE))
         if has_msur:
             cat2_score += 3
             passed.append("Surface metal identification logic detected (identifies topmost metal layer, Notebook Cell 02).")
@@ -294,23 +295,23 @@ class BenchmarkEvaluator:
             failed.append("Missing z-coordinate sorting (argsort/argmax) for systematic layer identification.")
 
         # Bulk/water oxygen classification via stoichiometry
-        has_obulk = bool(re.search(r"(o_bul|bulk_oxygen|o_w|water_oxygen|stoichiomet|s\s*\*\s*len|s\s*\*\s*N_metal)", code, re.IGNORECASE))
+        has_obulk = bool(re.search(r"(o_bul|bulk_oxygen|o_w|water_oxygen|stoichiomet|s\s*\*\s*len|s\s*\*\s*N_metal|o_bulk)", code, re.IGNORECASE))
         if has_obulk:
             cat2_score += 3
             passed.append("Bulk vs. water oxygen classification logic detected via oxide stoichiometry (Notebook Cell 02).")
         else:
             failed.append("Missing bulk vs water oxygen separation logic (Notebook Cell 02 lines 58-75).")
 
-        # Stoichiometry ratio constant (s=2 for rutile MO2)
-        has_stoich_ratio = bool(re.search(r"(s\s*=\s*2|stoich.*=\s*2|ratio\s*=\s*2|n_o.*2\s*\*|2\s*\*\s*n_metal)", code, re.IGNORECASE))
+        # Stoichiometry ratio constant (s=2 for rutile MO2 / TiO2)
+        has_stoich_ratio = bool(re.search(r"(s\s*=\s*2|stoich.*=\s*2|ratio\s*=\s*2|n_o.*2\s*\*|2\s*\*\s*n_metal|tio2)", code, re.IGNORECASE))
         if has_stoich_ratio:
             cat2_score += 2
-            passed.append("Stoichiometry ratio s=2 for rutile MO₂ structure correctly specified.")
+            passed.append("Stoichiometry ratio s=2 for rutile MO₂/TiO₂ structure correctly specified.")
         else:
             failed.append("Missing explicit stoichiometry ratio (s=2 for rutile IrO₂/TiO₂).")
 
         # CUS classification
-        has_cus = bool(re.search(r"\b(cus|m_cus|coordinatively\s+unsaturated)\b", code, re.IGNORECASE))
+        has_cus = bool(re.search(r"\b(cus|m_cus|ti_cus|coordinatively\s+unsaturated)\b", code, re.IGNORECASE))
         if has_cus:
             cat2_score += 3
             passed.append("Coordinatively Unsaturated Site (CUS) classification detected (Notebook Cell 02).")
@@ -326,7 +327,7 @@ class BenchmarkEvaluator:
             failed.append("Missing explicit 2.5 Å cutoff distance for CUS classification.")
 
         # Adsorbed/bridge oxygen tagging
-        has_oadb_obr = bool(re.search(r"(o_adb|adsorbed|o_br|bridge|o_sur)", code, re.IGNORECASE))
+        has_oadb_obr = bool(re.search(r"(o_adb|adsorbed|o_br|bridge|o_sur|o_inplane)", code, re.IGNORECASE))
         if has_oadb_obr:
             cat2_score += 3
             passed.append("Adsorbed oxygen (O_adb) and bridge oxygen (O_br) classification detected (Notebook Cell 02).")
@@ -381,7 +382,7 @@ class BenchmarkEvaluator:
             failed.append("Missing Pair RDF (g(r)) calculations.")
 
         # Specific RDF pairs: M_cus-O_w
-        has_rdf_mcus_ow = bool(re.search(r"(m_cus.*o_w|cus.*water|g_r_mow|metal.*water.*rdf|rdf.*cus)", code, re.IGNORECASE))
+        has_rdf_mcus_ow = bool(re.search(r"(m_cus.*o_w|cus.*water|g_r_mow|metal.*water.*rdf|rdf.*cus|ti_cus.*o_w|ti.*water.*rdf|ti.*o_w)", code, re.IGNORECASE))
         if has_rdf_mcus_ow:
             cat3_score += 3
             passed.append("RDF pair: M_cus—O_w (metal CUS to water oxygen) detected.")
@@ -458,8 +459,8 @@ class BenchmarkEvaluator:
         # =====================================================================
         cat5_score = 0
 
-        # Multi-model loop
-        has_multi_dp = bool(re.search(r"(dp_model|models|mean|std|average|cross_model|model_idx|modelz|model_num)", code, re.IGNORECASE))
+        # Multi-model or trajectory frame loop
+        has_multi_dp = bool(re.search(r"(dp_model|models|mean|std|average|cross_model|model_idx|modelz|model_num|traj|frame)", code, re.IGNORECASE))
         if has_multi_dp:
             cat5_score += 3
             passed.append("Multi-model trajectory loop / cross-model averaging (mean ± std) implemented.")

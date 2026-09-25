@@ -25,9 +25,14 @@ def init_db():
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         agent_used TEXT,
         tool_calls_json TEXT,
+        images_json TEXT,
         FOREIGN KEY (session_id) REFERENCES sessions (id)
     )
     """)
+    try:
+        cursor.execute("ALTER TABLE messages ADD COLUMN images_json TEXT")
+    except Exception:
+        pass
     
     # Jobs table
     cursor.execute("""
@@ -86,6 +91,10 @@ def init_db():
         FOREIGN KEY (session_id) REFERENCES sessions (id)
     )
     """)
+
+    # Prompts table (user-editable and deletable benchmark/custom prompts)
+    from backend.db.models import _ensure_prompts_table
+    _ensure_prompts_table(cursor)
     
     conn.commit()
     conn.close()

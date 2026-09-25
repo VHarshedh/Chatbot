@@ -1,0 +1,14 @@
+{
+  "id": "INSERT_KAGGLE_USERNAME/interfacial-water-analysis",
+  "title": "Interfacial Water Analysis",
+  "code_file": "running.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": "true",
+  "enable_gpu": "true",
+  "enable_tpu": "false",
+  "enable_internet": "true",
+  "dataset_sources": [],
+  "competition_sources": [],
+  "kernel_sources": []
+}

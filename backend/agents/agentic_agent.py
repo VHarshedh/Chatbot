@@ -2,7 +2,7 @@ import json
 import re
 import time
 import requests
-from typing import Dict, Any, Generator, Optional
+from typing import Dict, Any, Generator, Optional, List
 from backend.config import settings
 from backend.rag.hybrid_retriever import HybridRetriever
 from backend.tools.sandbox_tools import run_python_in_sandbox
@@ -33,11 +33,37 @@ class AgenticRAGAgent:
         ]
         return any(re.search(p, lower) for p in patterns)
 
-    def _call_llm(self, prompt: str, system_prompt: Optional[str] = None, stream: bool = False, timeout: int = 3600):
+    @staticmethod
+    def _clean_images(images: Optional[List[str]]) -> Optional[List[str]]:
+        if not images:
+            return None
+        cleaned = []
+        for img in images:
+            if not isinstance(img, str):
+                continue
+            img = img.strip()
+            if "," in img and ";base64" in img:
+                cleaned.append(img.split(",", 1)[1])
+            elif img:
+                cleaned.append(img)
+        return cleaned if cleaned else None
+
+    def _call_llm(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        stream: bool = False,
+        timeout: int = 3600,
+        images: Optional[List[str]] = None
+    ):
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
+        user_msg = {"role": "user", "content": prompt}
+        cleaned_imgs = self._clean_images(images)
+        if cleaned_imgs:
+            user_msg["images"] = cleaned_imgs
+        messages.append(user_msg)
 
         payload = {
             "model": self.model,
@@ -61,7 +87,8 @@ class AgenticRAGAgent:
         self,
         user_message: str,
         session_id: Optional[int] = None,
-        system_prompt: Optional[str] = None
+        system_prompt: Optional[str] = None,
+        images: Optional[List[str]] = None
     ) -> Generator[str, None, None]:
         """
         Executes the agentic pipeline with streaming SSE events:
@@ -79,7 +106,8 @@ class AgenticRAGAgent:
             session_id=session_id,
             role="user",
             content=user_message,
-            agent_used="AgenticRAG"
+            agent_used="AgenticRAG",
+            images_json=json.dumps(images) if images else None
         )
 
         yield f"data: {json.dumps({'type': 'session', 'session_id': session_id, 'mode': 'agentic'})}\n\n"
@@ -114,24 +142,34 @@ class AgenticRAGAgent:
         eval_count = 0
 
         if execution_requested:
-            cg_start = {"type": "agent_step", "step": "code_gen_start", "title": "Script Synthesis", "status": "running", "details": "Synthesizing Python analysis script using grounded RAG domain facts..."}
+            cg_start = {"type": "agent_step", "step": "code_gen_start", "title": "Script Synthesis", "status": "running", "details": "Synthesizing Python analysis script using running.ipynb context & RAG..."}
             trace_steps.append(cg_start)
             yield f"data: {json.dumps(cg_start)}\n\n"
 
-            code_prompt = f"""You are an expert computational materials science Python developer.
-Based on the following retrieved domain context from workspace Jupyter notebooks, write a complete, robust, executable Python script to address the user request.
+            nb_context_section = ""
+            try:
+                from backend.notebooks.attach_to_notebook import extract_notebook_context, format_notebook_context_prompt
+                nb_ctx = extract_notebook_context()
+                nb_context_section = f"{format_notebook_context_prompt(nb_ctx)}\n\n"
+            except Exception:
+                pass
 
---- RETRIEVED WORKSPACE NOTEBOOK CONTEXT ---
+            code_prompt = f"""You are an expert computational materials science Python developer.
+Based on the following execution context from the target notebook `running.ipynb` and retrieved domain context from workspace Jupyter notebooks, write a complete, robust, executable Python script to address the user request.
+
+{nb_context_section}--- RETRIEVED WORKSPACE NOTEBOOK CONTEXT ---
 {context}
 
 --- USER REQUEST ---
 {user_message}
 
 CRITICAL IMPLEMENTATION REQUIREMENTS:
-1. Ground your script on the retrieved notebook implementation.
+1. Ground your script on the target notebook `running.ipynb` (pre-loaded `traj` variable in memory from `/content/MPtrj/...`).
 2. For interfacial site identification, neighbor searches, and distance cutoffs, you MUST use `ase.neighborlist` (specifically `from ase.neighborlist import neighbor_list, natural_cutoffs` or `NeighborList`).
 3. For multi-model DP averaging, reference the trained DeepMD potential models located at `Training/DP_Models/DPMD_Water/1/`, `Training/DP_Models/DPMD_Water/2/`, and `Training/DP_Models/DPMD_Water/3/`.
-4. Output ONLY valid executable Python code in a ```python ... ``` block. Use ASE, NumPy, and Matplotlib."""
+4. Variable `traj` is already loaded in `running.ipynb`. You can safely access `traj` directly or load from `traj_file`.
+5. Get straight to the point and do not beat around the bush. Do not include introductory pleasantries or explanations.
+6. Output ONLY valid executable Python code in a ```python ... ``` block. Use ASE, NumPy, and Matplotlib."""
 
             try:
                 code_response_parts = []
@@ -190,6 +228,23 @@ CRITICAL IMPLEMENTATION REQUIREMENTS:
                 trace_steps.append(cg_done)
                 yield f"data: {json.dumps(cg_done)}\n\n"
 
+                # Automatically attach script to Colab running.ipynb
+                if code_extracted:
+                    try:
+                        from backend.notebooks.attach_to_notebook import attach_script_to_notebook
+                        nb_attach = attach_script_to_notebook(code_extracted)
+                        nb_step = {
+                            "type": "agent_step",
+                            "step": "notebook_attached",
+                            "title": "Colab Notebook Updated",
+                            "status": "completed",
+                            "details": f"Attached script to running.ipynb (Cell #{nb_attach['target_cell_index'] + 1}). Ready to run in Colab/Kaggle!"
+                        }
+                        trace_steps.append(nb_step)
+                        yield f"data: {json.dumps(nb_step)}\n\n"
+                    except Exception:
+                        pass
+
                 # Run in Docker Sandbox
                 sb_start = {"type": "agent_step", "step": "sandbox_start", "title": "Docker Sandbox Execution", "status": "running", "details": "Executing script inside isolated container (2GB RAM, no-net)..."}
                 trace_steps.append(sb_start)
@@ -230,6 +285,11 @@ Write the corrected Python code block only."""
                     fixed_code_match = re.search(r"```(?:python)?\s*([\s\S]*?)```", fix_res.json().get("message", {}).get("content", ""))
                     if fixed_code_match:
                         code_extracted = fixed_code_match.group(1).strip()
+                        try:
+                            from backend.notebooks.attach_to_notebook import attach_script_to_notebook
+                            attach_script_to_notebook(code_extracted)
+                        except Exception:
+                            pass
                     
                     # Second execution attempt
                     retry_res = run_python_in_sandbox(code_extracted)
@@ -268,7 +328,7 @@ NEVER claim you lack an execution environment, cannot run code, or cannot access
 User Query:
 {user_message}
 
-Provide a well-structured response with clear headings, KaTeX LaTeX math formulas ($...$ for inline, $$...$$ for display blocks), and code blocks using `ase.neighborlist` where appropriate."""
+Get straight to the point and do not beat around the bush. Eliminate pleasantries and conversational filler. Provide a well-structured, rigorous response with clear headings, KaTeX LaTeX math formulas ($...$ for inline, $$...$$ for display blocks), and code blocks using `ase.neighborlist` where appropriate. Conclude by explicitly informing the user that their complete analysis script has been attached to `ChatBot/backend/notebooks/running.ipynb` and they can now execute the notebook in Google Colab (or on Kaggle with T4x2 GPU)."""
 
         if code_extracted and content_parts:
             divider = "\n\n---\n\n### Scientific Synthesis & Findings\n\n"
@@ -279,13 +339,15 @@ Provide a well-structured response with clear headings, KaTeX LaTeX math formula
             default_sys = (
                 "You are SciCompute AI, an autonomous scientific materials & chemistry assistant with direct access to "
                 "retrieved workspace Jupyter notebooks (.ipynb), trained DeepMD models in Training/DP_Models/, "
-                "a Docker execution sandbox, and web search tools. Never state that you cannot execute code or lack environment access."
+                "a Docker execution sandbox, and web search tools. Get straight to the point and do not beat around the bush. "
+                "Never state that you cannot execute code or lack environment access."
             )
             stream_res = self._call_llm(
                 prompt=synthesis_prompt,
                 system_prompt=system_prompt or default_sys,
                 stream=True,
-                timeout=3600
+                timeout=3600,
+                images=images
             )
             stream_res.raise_for_status()
 
@@ -348,7 +410,8 @@ Provide a well-structured response with clear headings, KaTeX LaTeX math formula
         self,
         user_message: str,
         session_id: Optional[int] = None,
-        system_prompt: Optional[str] = None
+        system_prompt: Optional[str] = None,
+        images: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """Synchronous chat execution for Agentic RAG"""
         thinking_parts = []
@@ -357,7 +420,7 @@ Provide a well-structured response with clear headings, KaTeX LaTeX math formula
         latency = 0.0
         tool_calls = []
 
-        for sse in self.chat_stream(user_message, session_id=session_id, system_prompt=system_prompt):
+        for sse in self.chat_stream(user_message, session_id=session_id, system_prompt=system_prompt, images=images):
             if "data: " in sse:
                 try:
                     payload = json.loads(sse.replace("data: ", "").strip())

@@ -41,6 +41,32 @@ const drawerBtnZeroShot = document.getElementById("drawer-btn-zero-shot");
 const drawerBtnAgentic = document.getElementById("drawer-btn-agentic");
 const drawerModelName = document.getElementById("drawer-model-name");
 
+// Prompt Management & Modal Elements
+const addPromptBtn = document.getElementById("add-prompt-btn");
+const resetPromptsBtn = document.getElementById("reset-prompts-btn");
+const promptModal = document.getElementById("prompt-modal");
+const promptModalBackdrop = document.getElementById("prompt-modal-backdrop");
+const closePromptModalBtn = document.getElementById("close-prompt-modal-btn");
+const cancelPromptBtn = document.getElementById("cancel-prompt-btn");
+const promptForm = document.getElementById("prompt-form");
+const promptFormId = document.getElementById("prompt-form-id");
+const promptFormTitle = document.getElementById("prompt-form-title");
+const promptFormDomain = document.getElementById("prompt-form-domain");
+const promptFormText = document.getElementById("prompt-form-text");
+const promptModalTitle = document.getElementById("prompt-modal-title");
+const promptModalSubtitle = document.getElementById("prompt-modal-subtitle");
+const savePromptBtnText = document.getElementById("save-prompt-btn-text");
+
+// Confirm Modal Elements
+const confirmModal = document.getElementById("confirm-modal");
+const confirmModalBackdrop = document.getElementById("confirm-modal-backdrop");
+const confirmModalTitle = document.getElementById("confirm-modal-title");
+const confirmModalDesc = document.getElementById("confirm-modal-desc");
+const confirmModalCancel = document.getElementById("confirm-modal-cancel");
+const confirmModalOk = document.getElementById("confirm-modal-ok");
+const confirmModalIconBadge = document.getElementById("confirm-modal-icon-badge");
+let confirmActionCallback = null;
+
 // ─── Toast Notification System ───────────────────────────────────────────────
 function showToast(message, type = "info", duration = 3000) {
   const container = document.getElementById("toast-container");
@@ -530,6 +556,46 @@ function setupEventListeners() {
   if (btnModeAgenticRag) {
     btnModeAgenticRag.addEventListener("click", () => setEngineMode("agentic"));
   }
+
+  // Benchmark prompt management listeners
+  if (addPromptBtn) {
+    addPromptBtn.addEventListener("click", () => openPromptModal("create"));
+  }
+  if (resetPromptsBtn) {
+    resetPromptsBtn.addEventListener("click", confirmResetPrompts);
+  }
+  if (closePromptModalBtn) {
+    closePromptModalBtn.addEventListener("click", closePromptModal);
+  }
+  if (cancelPromptBtn) {
+    cancelPromptBtn.addEventListener("click", closePromptModal);
+  }
+  if (promptModalBackdrop) {
+    promptModalBackdrop.addEventListener("click", closePromptModal);
+  }
+  if (promptForm) {
+    promptForm.addEventListener("submit", handlePromptFormSubmit);
+  }
+  if (confirmModalCancel) {
+    confirmModalCancel.addEventListener("click", closeConfirmModal);
+  }
+  if (confirmModalBackdrop) {
+    confirmModalBackdrop.addEventListener("click", closeConfirmModal);
+  }
+  if (confirmModalOk) {
+    confirmModalOk.addEventListener("click", handleConfirmModalOk);
+  }
+
+  // Global escape key listener to dismiss open modals or drawers
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      if (promptModal && promptModal.classList.contains("active")) {
+        closePromptModal();
+      } else if (confirmModal && confirmModal.classList.contains("active")) {
+        closeConfirmModal();
+      }
+    }
+  });
 }
 
 // Auto-grow textarea
@@ -581,27 +647,67 @@ async function loadBenchmarkPrompts() {
 
     if (benchmarkList) {
       benchmarkList.innerHTML = "";
-      benchmarkPrompts.forEach((bp) => {
-        const item = document.createElement("div");
-        item.className = "benchmark-item";
-        item.innerHTML = `
-          <div class="benchmark-header">
-            <span class="benchmark-domain">${escapeHtml(bp.domain)}</span>
-          </div>
-          <div class="benchmark-title">${escapeHtml(bp.title)}</div>
-        `;
-        item.addEventListener("click", () => selectBenchmarkPrompt(bp));
-        benchmarkList.appendChild(item);
-      });
+      if (benchmarkPrompts.length === 0) {
+        benchmarkList.innerHTML = `<div style="font-size:0.75rem; color:var(--text-muted); padding:10px 4px; text-align:center;">No prompts saved. Click + to add one.</div>`;
+      } else {
+        benchmarkPrompts.forEach((bp) => {
+          const item = document.createElement("div");
+          item.className = "benchmark-item";
+          item.setAttribute("data-prompt-id", bp.id);
+          item.innerHTML = `
+            <div class="benchmark-header">
+              <span class="benchmark-domain">${escapeHtml(bp.domain)}</span>
+              <div class="benchmark-item-actions">
+                <button class="btn-prompt-action edit-prompt-btn" title="Edit prompt: ${escapeHtml(bp.title)}" aria-label="Edit prompt">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                  </svg>
+                </button>
+                <button class="btn-prompt-action delete-prompt-btn" title="Delete prompt: ${escapeHtml(bp.title)}" aria-label="Delete prompt">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <div class="benchmark-title">${escapeHtml(bp.title)}</div>
+          `;
+
+          item.addEventListener("click", (e) => {
+            if (e.target.closest(".btn-prompt-action")) return;
+            selectBenchmarkPrompt(bp);
+          });
+
+          const editBtn = item.querySelector(".edit-prompt-btn");
+          if (editBtn) {
+            editBtn.addEventListener("click", (e) => {
+              e.stopPropagation();
+              openPromptModal("edit", bp);
+            });
+          }
+
+          const delBtn = item.querySelector(".delete-prompt-btn");
+          if (delBtn) {
+            delBtn.addEventListener("click", (e) => {
+              e.stopPropagation();
+              confirmDeletePrompt(bp);
+            });
+          }
+
+          benchmarkList.appendChild(item);
+        });
+      }
     }
 
     // Wire up welcome hero cards
     document.querySelectorAll(".domain-card").forEach((card) => {
-      card.addEventListener("click", () => {
+      card.onclick = () => {
         const id = card.getAttribute("data-prompt-id");
         const found = benchmarkPrompts.find((p) => p.id === id);
         if (found) selectBenchmarkPrompt(found);
-      });
+      };
     });
   } catch (err) {
     console.error("Error loading benchmark prompts:", err);
@@ -613,6 +719,172 @@ function selectBenchmarkPrompt(bp) {
   promptInput.focus();
   promptInput.style.height = "auto";
   promptInput.style.height = Math.min(promptInput.scrollHeight, 180) + "px";
+}
+
+// ─── Benchmark Prompt Modal Operations ─────────────────────────────────────────
+
+function openPromptModal(mode, bp = null) {
+  if (!promptModal || !promptModalBackdrop) return;
+  if (mode === "edit" && bp) {
+    if (promptModalTitle) promptModalTitle.textContent = "Edit Benchmark Prompt";
+    if (promptModalSubtitle) promptModalSubtitle.textContent = "Modify instructions or domain category";
+    if (savePromptBtnText) savePromptBtnText.textContent = "Save Changes";
+    if (promptFormId) promptFormId.value = bp.id;
+    if (promptFormTitle) promptFormTitle.value = bp.title;
+    if (promptFormDomain) promptFormDomain.value = bp.domain;
+    if (promptFormText) promptFormText.value = bp.prompt;
+  } else {
+    if (promptModalTitle) promptModalTitle.textContent = "Create Benchmark Prompt";
+    if (promptModalSubtitle) promptModalSubtitle.textContent = "Add a new benchmark prompt for model evaluation";
+    if (savePromptBtnText) savePromptBtnText.textContent = "Create Prompt";
+    if (promptFormId) promptFormId.value = "";
+    if (promptFormTitle) promptFormTitle.value = "";
+    if (promptFormDomain) promptFormDomain.value = "Custom";
+    if (promptFormText) promptFormText.value = "";
+  }
+  promptModal.classList.add("active");
+  promptModalBackdrop.classList.add("active");
+  promptModal.setAttribute("aria-hidden", "false");
+  promptModalBackdrop.setAttribute("aria-hidden", "false");
+  setTimeout(() => promptFormTitle?.focus(), 60);
+}
+
+function closePromptModal() {
+  if (!promptModal || !promptModalBackdrop) return;
+  promptModal.classList.remove("active");
+  promptModalBackdrop.classList.remove("active");
+  promptModal.setAttribute("aria-hidden", "true");
+  promptModalBackdrop.setAttribute("aria-hidden", "true");
+}
+
+async function handlePromptFormSubmit(e) {
+  e.preventDefault();
+  const id = promptFormId?.value?.trim();
+  const title = promptFormTitle?.value?.trim();
+  const domain = promptFormDomain?.value?.trim();
+  const prompt = promptFormText?.value?.trim();
+
+  if (!title || !domain || !prompt) {
+    showToast("Please fill in all prompt fields", "warning", 3000);
+    return;
+  }
+
+  try {
+    if (id) {
+      // Update existing prompt
+      const res = await fetch(`/api/benchmark_prompts/${encodeURIComponent(id)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, domain, prompt })
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "Failed to update prompt");
+      }
+      showToast("Prompt updated successfully", "success", 2500);
+    } else {
+      // Create new prompt
+      const res = await fetch("/api/benchmark_prompts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, domain, prompt })
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "Failed to create prompt");
+      }
+      showToast("Prompt created successfully", "success", 2500);
+    }
+    closePromptModal();
+    await loadBenchmarkPrompts();
+  } catch (err) {
+    console.error("Error saving prompt:", err);
+    showToast(err.message || "Error saving prompt", "error", 4000);
+  }
+}
+
+// ─── Confirmation Modal Helper ────────────────────────────────────────────────
+
+function showConfirmModal({ title, message, okText = "Confirm", isDanger = false, onConfirm }) {
+  if (!confirmModal || !confirmModalBackdrop) return;
+  if (confirmModalTitle) confirmModalTitle.textContent = title;
+  if (confirmModalDesc) confirmModalDesc.textContent = message;
+  if (confirmModalOk) {
+    confirmModalOk.textContent = okText;
+    if (isDanger) {
+      confirmModalOk.className = "btn btn-danger";
+      if (confirmModalIconBadge) confirmModalIconBadge.className = "modal-icon-badge danger";
+    } else {
+      confirmModalOk.className = "btn btn-primary";
+      if (confirmModalIconBadge) confirmModalIconBadge.className = "modal-icon-badge";
+    }
+  }
+  confirmActionCallback = onConfirm;
+  confirmModal.classList.add("active");
+  confirmModalBackdrop.classList.add("active");
+  confirmModal.setAttribute("aria-hidden", "false");
+  confirmModalBackdrop.setAttribute("aria-hidden", "false");
+}
+
+function closeConfirmModal() {
+  if (!confirmModal || !confirmModalBackdrop) return;
+  confirmModal.classList.remove("active");
+  confirmModalBackdrop.classList.remove("active");
+  confirmModal.setAttribute("aria-hidden", "true");
+  confirmModalBackdrop.setAttribute("aria-hidden", "true");
+  confirmActionCallback = null;
+}
+
+function handleConfirmModalOk() {
+  if (typeof confirmActionCallback === "function") {
+    confirmActionCallback();
+  }
+  closeConfirmModal();
+}
+
+function confirmDeletePrompt(bp) {
+  showConfirmModal({
+    title: "Delete Prompt?",
+    message: `Are you sure you want to delete "${bp.title}" (${bp.domain})? This benchmark prompt will be permanently removed.`,
+    okText: "Delete Prompt",
+    isDanger: true,
+    onConfirm: async () => {
+      try {
+        const res = await fetch(`/api/benchmark_prompts/${encodeURIComponent(bp.id)}`, {
+          method: "DELETE"
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || "Failed to delete prompt");
+        }
+        showToast("Prompt deleted", "success", 2000);
+        await loadBenchmarkPrompts();
+      } catch (err) {
+        console.error("Error deleting prompt:", err);
+        showToast(err.message || "Failed to delete prompt", "error", 3000);
+      }
+    }
+  });
+}
+
+function confirmResetPrompts() {
+  showConfirmModal({
+    title: "Reset to Default Prompts?",
+    message: "This will revert the prompt list back to the default benchmark suite (IrO2 interfacial analysis, DFT cutoffs, LAMMPS DeePMD, dataset layout, and surface kinetics). Custom or edited prompts will be reset.",
+    okText: "Reset Defaults",
+    isDanger: false,
+    onConfirm: async () => {
+      try {
+        const res = await fetch("/api/benchmark_prompts/reset", { method: "POST" });
+        if (!res.ok) throw new Error("Failed to reset prompts");
+        showToast("Benchmark prompts reset to defaults", "info", 2500);
+        await loadBenchmarkPrompts();
+      } catch (err) {
+        console.error("Error resetting prompts:", err);
+        showToast("Failed to reset prompts", "error", 3000);
+      }
+    }
+  });
 }
 
 // =============================================================================
@@ -644,7 +916,7 @@ async function handleRunFlagshipEvaluation() {
   bubble.innerHTML = `
     <div class="stream-header-bar">
       <span class="live-timer-badge">⏳ Starting Flagship Evaluation... 0.0s</span>
-      <span class="live-model-pill">batiai/gemma4-e2b:q4 • Zero-Shot Evaluation</span>
+      <span class="live-model-pill">batiai/gemma4-e2b:q4 • running.ipynb Grounded • Zero-Shot</span>
     </div>
     <details class="thinking-details" style="display:none;" open>
       <summary class="thinking-summary">
@@ -770,6 +1042,9 @@ async function handleRunFlagshipEvaluation() {
       currentSessionId = finalEvalData.session_id;
       timerBadge.textContent = `⚡ Completed (${finalEvalData.score}/100 Grade ${finalEvalData.grade})`;
       renderEvaluationReport(finalEvalData);
+      if (finalEvalData.notebook_attached && finalEvalData.notebook_attached.status === "success") {
+        showToast("✓ Generated script attached to running.ipynb! Ready to run in Colab/Kaggle.", "success", 4500);
+      }
       await loadEvaluationHistory();
       await loadSessions();
       scrollToBottom();
@@ -887,6 +1162,17 @@ function renderEvaluationReport(ev) {
     </div>
   `;
 
+  if (ev.notebook_context || !isHybrid) {
+    const sysName = (ev.notebook_context && ev.notebook_context.system_name) || "molecular";
+    const detSys = (ev.notebook_context && ev.notebook_context.detected_system) || "Anatase (TiO2) / Water Interface";
+    html += `
+      <div style="display:flex; align-items:center; gap:8px; background:rgba(59,130,246,0.08); border:1px solid rgba(59,130,246,0.22); border-radius:6px; padding:6px 12px; margin:8px 0; font-size:0.78rem; color:var(--text-secondary);">
+        <span>📓</span>
+        <span><strong>running.ipynb Context Grounding</strong>: Script synthesized with pre-loaded <code>traj</code> (${escapeHtml(detSys)} • <code>${escapeHtml(sysName)}</code>) in Colab execution scope</span>
+      </div>
+    `;
+  }
+
   // 3. Category Progress Bars
   html += `<div class="category-bars-grid">`;
   const activeCategoryKeys = Object.keys(catScores).length > 0
@@ -970,7 +1256,10 @@ function renderEvaluationReport(ev) {
       </summary>
       <div class="code-header-bar">
         <span>Zero-Shot Generated Implementation</span>
-        <button class="btn-copy-code" type="button">Copy Code</button>
+        <div style="display:flex; gap:6px; align-items:center;">
+          <button class="btn-attach-notebook" type="button" title="Attach script to running.ipynb">📓 Attach to Colab Notebook</button>
+          <button class="btn-copy-code" type="button">Copy Code</button>
+        </div>
       </div>
       <div class="eval-details-content" style="padding:0;">
         <pre style="margin:0; border:none; border-radius:0;"><code class="language-python">${escapeHtml(codeText || "# No code extracted from response")}</code></pre>
@@ -991,6 +1280,41 @@ function renderEvaluationReport(ev) {
         setTimeout(() => { copyBtn.textContent = "Copy Code"; }, 2000);
       } catch (err) {
         copyBtn.textContent = "Error";
+      }
+    });
+  }
+
+  // Attach to notebook button handler
+  const attachBtn = card.querySelector(".btn-attach-notebook");
+  if (attachBtn && codeText) {
+    attachBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      attachBtn.disabled = true;
+      attachBtn.textContent = "⏳ Attaching...";
+      try {
+        const res = await fetch("/api/notebooks/attach", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code: codeText, notebook_name: "running.ipynb" })
+        });
+        const data = await res.json();
+        if (res.ok && data.status === "success") {
+          attachBtn.textContent = "✓ Attached!";
+          showToast(`Attached script to running.ipynb (Cell #${data.target_cell_index + 1})! Ready to run.`, "success", 4000);
+          setTimeout(() => {
+            attachBtn.textContent = "📓 Attach to Colab Notebook";
+            attachBtn.disabled = false;
+          }, 3000);
+        } else {
+          throw new Error(data.detail || "Failed to attach");
+        }
+      } catch (err) {
+        attachBtn.textContent = "Error";
+        showToast(`Failed to attach: ${err.message}`, "error", 4000);
+        setTimeout(() => {
+          attachBtn.textContent = "📓 Attach to Colab Notebook";
+          attachBtn.disabled = false;
+        }, 3000);
       }
     });
   }

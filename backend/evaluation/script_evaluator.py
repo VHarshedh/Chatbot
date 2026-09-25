@@ -19,7 +19,7 @@ class ScriptEvaluator:
     REFERENCE_METRICS: Dict[str, Dict[str, Any]] = BenchmarkEvaluator.REFERENCE_METRICS
 
     FLAGSHIP_BENCHMARK_KEYWORDS: List[str] = [
-        "interfacial", "rutile", "iro2", "water_density", "survival_probability",
+        "interfacial", "rutile", "iro2", "anatase", "running.ipynb", "water_density", "survival_probability",
         "hydroxyl_fraction", "flagship", "100-point", "ground truth standard"
     ]
 
@@ -98,12 +98,17 @@ class ScriptEvaluator:
             return True
 
         # Check for signature benchmark variables/structures in code
-        if code and re.search(r"(m_sur|o_bulk|cus_sites|full_analysis_presentation|survival_fraction_results)", code):
+        if code and re.search(r"(m_sur|o_bulk|cus_sites|full_analysis_presentation|survival_fraction_results|anatase_wrapped|ti_cus)", code):
             return True
 
         return False
 
-    def evaluate(self, raw_response: str, prompt: Optional[str] = None) -> Dict[str, Any]:
+    def evaluate(
+        self,
+        raw_response: str,
+        prompt: Optional[str] = None,
+        notebook_context: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         """
         Evaluates a zero-shot or agentic generated script.
         Routes to the RAG Flagship Benchmark Evaluator or the Dynamic Test Generator
@@ -113,7 +118,7 @@ class ScriptEvaluator:
 
         # Flagship RAG Benchmark Route
         if self.is_flagship_benchmark(prompt, code):
-            result = self._benchmark_evaluator.evaluate(code, raw_response)
+            result = self._benchmark_evaluator.evaluate(code, raw_response, notebook_context=notebook_context)
             result["evaluation_type"] = "rag_benchmark"
             return result
 
@@ -128,6 +133,7 @@ class ScriptEvaluator:
             "evaluation_type": "dynamic_hybrid",
             "domain": dyn_result.get("domain", "general_simulation"),
             "reference_notebook": None,
+            "notebook_context": notebook_context,
             "category_scores": dyn_result["category_scores"],
             "passed_checks": dyn_result["passed_checks"],
             "failed_checks": dyn_result["failed_checks"],

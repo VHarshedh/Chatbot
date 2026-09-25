@@ -209,3 +209,61 @@ def test_chat_stream_endpoint_agentic_mode(mocker):
     assert "agent_step" in text
     assert "Agentic content" in text
 
+def test_prompt_crud_and_reset_flow():
+    # 1. Reset first to ensure clean state
+    reset_res = client.post("/api/benchmark_prompts/reset")
+    assert reset_res.status_code == 200
+    assert len(reset_res.json()["prompts"]) == 5
+
+    # 2. Create a new custom prompt
+    create_payload = {
+        "id": "custom_test_prompt",
+        "title": "Custom Test Prompt",
+        "domain": "Machine Learning",
+        "prompt": "Test generating an ML potential training script."
+    }
+    create_res = client.post("/api/benchmark_prompts", json=create_payload)
+    assert create_res.status_code == 200
+    created = create_res.json()
+    assert created["id"] == "custom_test_prompt"
+    assert created["title"] == "Custom Test Prompt"
+    assert created["domain"] == "Machine Learning"
+
+    # 3. Retrieve the created prompt
+    get_res = client.get("/api/benchmark_prompts/custom_test_prompt")
+    assert get_res.status_code == 200
+    assert get_res.json()["title"] == "Custom Test Prompt"
+
+    # 4. Update the prompt
+    update_payload = {
+        "title": "Updated Custom Test Prompt",
+        "domain": "Neural Potential",
+        "prompt": "Updated prompt text for testing."
+    }
+    update_res = client.put("/api/benchmark_prompts/custom_test_prompt", json=update_payload)
+    assert update_res.status_code == 200
+    updated = update_res.json()
+    assert updated["title"] == "Updated Custom Test Prompt"
+    assert updated["domain"] == "Neural Potential"
+    assert updated["prompt"] == "Updated prompt text for testing."
+
+    # 5. Delete the prompt
+    del_res = client.delete("/api/benchmark_prompts/custom_test_prompt")
+    assert del_res.status_code == 200
+    assert del_res.json()["status"] == "success"
+
+    # 6. Verify prompt is deleted (404)
+    get_del_res = client.get("/api/benchmark_prompts/custom_test_prompt")
+    assert get_del_res.status_code == 404
+
+    # 7. Delete nonexistent prompt returns 404
+    del_404_res = client.delete("/api/benchmark_prompts/non_existent_id")
+    assert del_404_res.status_code == 404
+
+    # 8. Reset restores original defaults
+    reset_again = client.post("/api/benchmark_prompts/reset")
+    assert reset_again.status_code == 200
+    prompts = client.get("/api/benchmark_prompts").json()
+    assert len(prompts) == 5
+
+

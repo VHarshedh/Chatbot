@@ -33,11 +33,12 @@ class AnalysisAgent:
         
         # 2. Write Script
         prompt = f"""You are a scientific Python developer. 
+Get straight to the point and do not beat around the bush.
 Write a Python script using ASE, NumPy, and Pandas to fulfill the user's analysis request.
 The script will run in a sandbox.
 If you need a trajectory, assume it's mounted at '{data_path if data_path else '/mnt/data/traj.extxyz'}'.
 Save any plots to the current working directory as PNG files.
-Only output the Python code, nothing else (no markdown blocks).
+Only output the Python code, nothing else (no markdown blocks, no conversational preamble or pleasantries).
 
 Context:
 {context}

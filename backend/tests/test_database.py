@@ -1,6 +1,18 @@
 import pytest
 import sqlite3
-from backend.db.models import execute_query, insert_session, insert_message, insert_evaluation, get_evaluations
+from backend.db.models import (
+    execute_query,
+    insert_session,
+    insert_message,
+    insert_evaluation,
+    get_evaluations,
+    get_prompts,
+    get_prompt_by_id,
+    insert_prompt,
+    update_prompt,
+    delete_prompt,
+    reset_prompts
+)
 
 @pytest.fixture
 def memory_db(tmp_path):
@@ -84,3 +96,42 @@ def test_insert_and_get_evaluations(memory_db):
     assert evals[0]["id"] == eval_id
     assert evals[0]["score"] == 95.0
     assert evals[0]["grade"] == "A"
+
+def test_prompts_crud_and_reset(memory_db):
+    # 1. get_prompts automatically seeds default prompts
+    prompts = get_prompts()
+    assert len(prompts) == 5
+    first_id = prompts[0]["id"]
+
+    # 2. get_prompt_by_id
+    p = get_prompt_by_id(first_id)
+    assert p is not None
+    assert p["id"] == first_id
+
+    # 3. insert_prompt
+    new_p = insert_prompt(
+        prompt_id="test_new_prompt",
+        title="New Test Prompt",
+        domain="Surface Analysis",
+        prompt="Test prompt body"
+    )
+    assert new_p["id"] == "test_new_prompt"
+    assert new_p["title"] == "New Test Prompt"
+    assert len(get_prompts()) == 6
+
+    # 4. update_prompt
+    upd = update_prompt("test_new_prompt", title="Updated Title", domain="DFT")
+    assert upd["title"] == "Updated Title"
+    assert upd["domain"] == "DFT"
+    assert upd["prompt"] == "Test prompt body"
+
+    # 5. delete_prompt
+    assert delete_prompt("test_new_prompt") is True
+    assert get_prompt_by_id("test_new_prompt") is None
+    assert delete_prompt("test_new_prompt") is False
+
+    # 6. reset_prompts
+    restored = reset_prompts()
+    assert len(restored) == 5
+    assert any(x["id"] == "interfacial_script_gen" for x in restored)
+
