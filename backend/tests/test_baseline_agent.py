@@ -167,3 +167,155 @@ def test_chat_stream_connection_error(mocker):
     joined = "".join(chunks)
     assert "error" in joined
     assert "Could not connect to Ollama" in joined
+
+def test_generate_response_with_docker_execution_molecular(mocker):
+    # Mock LLM returning Python code for molecular extxyz
+    mock_resp = mocker.MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "response": "Here is the parsing script:\n```python\nfrom ase.io import read\ntraj = read('/mnt/data/Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz')\nprint('Total Energy:', -185982.25)\n```",
+        "total_duration": 1000000,
+        "eval_count": 50
+    }
+    mocker.patch("requests.post", return_value=mock_resp)
+    
+    mock_sandbox = mocker.patch("backend.tools.sandbox_tools.run_python_in_sandbox", return_value={
+        "exit_code": 0,
+        "stdout": "Total Energy: -185982.25\n",
+        "stderr": "",
+        "artifacts": []
+    })
+    mock_attach = mocker.patch("backend.notebooks.attach_to_notebook.attach_script_to_notebook")
+
+    agent = SingleShotAgent()
+    res = agent.generate_response("Calculate energy of anatase tio2 water molecular extxyz")
+
+    assert res["status"] == "success"
+    assert mock_sandbox.called
+    assert "Secure Docker Sandbox Execution" in res["response"]
+    assert "Total Energy: -185982.25" in res["response"]
+    assert "Success (Exit Code 0)" in res["response"]
+    # Molecular extxyz should NOT attach to notebook
+    assert not mock_attach.called
+
+def test_generate_response_with_docker_execution_standard(mocker):
+    # Mock LLM returning Python code for anatase tio2 alone
+    mock_resp = mocker.MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "response": "Here is the code:\n```python\nimport numpy as np\nprint('Computed RDF')\nprint('Done')\n```",
+        "total_duration": 1000000,
+        "eval_count": 40
+    }
+    mocker.patch("requests.post", return_value=mock_resp)
+    
+    mock_sandbox = mocker.patch("backend.tools.sandbox_tools.run_python_in_sandbox", return_value={
+        "exit_code": 0,
+        "stdout": "Computed RDF\nDone\n",
+        "stderr": "",
+        "artifacts": ["plot.png"]
+    })
+    mock_attach = mocker.patch("backend.notebooks.attach_to_notebook.attach_script_to_notebook", return_value={
+        "target_cell_index": 6
+    })
+
+    agent = SingleShotAgent()
+    res = agent.generate_response("Compute RDF for anatase tio2")
+
+    assert res["status"] == "success"
+    assert mock_sandbox.called
+    assert "plot.png" in res["response"]
+    assert "Secure Docker Sandbox Execution" in res["response"]
+    # Standard anatase tio2 should attach to notebook
+    assert mock_attach.called
+    assert "Colab Notebook Ready" in res["response"]
+
+def test_generate_response_with_history(mocker):
+    captured_payload = {}
+    def mock_post(url, json=None, **kwargs):
+        nonlocal captured_payload
+        captured_payload = json
+        mock_resp = mocker.MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "response": "Anatase bandgap is 3.2 eV.",
+            "total_duration": 100,
+            "eval_count": 10
+        }
+        return mock_resp
+
+    mocker.patch("requests.post", side_effect=mock_post)
+
+    history = [
+        {"role": "user", "content": "What is Anatase TiO2?"},
+        {"role": "assistant", "content": "Anatase is a metastable mineral form of titanium dioxide."}
+    ]
+
+    agent = SingleShotAgent()
+    res = agent.generate_response("What is its bandgap?", history=history)
+
+    assert res["status"] == "success"
+    assert "messages" in captured_payload
+    msgs = captured_payload["messages"]
+    # system + 2 history messages + current user message = 4
+    assert len(msgs) == 4
+    assert msgs[0]["role"] == "system"
+    assert msgs[1]["role"] == "user"
+    assert msgs[1]["content"] == "What is Anatase TiO2?"
+    assert msgs[2]["role"] == "assistant"
+    assert msgs[2]["content"] == "Anatase is a metastable mineral form of titanium dioxide."
+    assert msgs[3]["role"] == "user"
+    assert msgs[3]["content"] == "What is its bandgap?"
+
+def test_chat_with_existing_history(mocker):
+    fake_history = [
+        {"role": "user", "content": "Tell me about Pt."},
+        {"role": "assistant", "content": "Platinum is a transition metal."}
+    ]
+    mock_get_history = mocker.patch("backend.agents.baseline_agent.get_chat_history", return_value=fake_history)
+    mocker.patch("backend.agents.baseline_agent.insert_message")
+    mock_gen = mocker.patch.object(SingleShotAgent, "generate_response", return_value={
+        "status": "success",
+        "response": "Its lattice constant is 3.92 Angstroms."
+    })
+
+    agent = SingleShotAgent()
+    res = agent.chat("What is its lattice constant?", session_id=55)
+
+    assert res["status"] == "success"
+    assert mock_get_history.called
+    assert mock_get_history.call_args[1]["session_id"] == 55
+    assert mock_gen.called
+    assert mock_gen.call_args[1]["history"] == fake_history
+
+def test_chat_stream_with_history(mocker):
+    fake_history = [
+        {"role": "user", "content": "Turn 1 question"},
+        {"role": "assistant", "content": "Turn 1 answer"}
+    ]
+    mocker.patch("backend.agents.baseline_agent.get_chat_history", return_value=fake_history)
+    mocker.patch("backend.agents.baseline_agent.insert_message")
+
+    captured_payload = {}
+    def mock_post(url, json=None, **kwargs):
+        nonlocal captured_payload
+        captured_payload = json
+        mock_resp = mocker.MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.iter_lines.return_value = [
+            json.dumps({"message": {"content": "Turn 2 response"}}).encode("utf-8")
+        ]
+        return mock_resp
+
+    mocker.patch("requests.post", side_effect=mock_post)
+
+    agent = SingleShotAgent()
+    events = list(agent.chat_stream("Turn 2 question", session_id=77))
+
+    assert len(events) > 0
+    msgs = captured_payload["messages"]
+    assert len(msgs) == 4
+    assert msgs[1]["content"] == "Turn 1 question"
+    assert msgs[2]["content"] == "Turn 1 answer"
+    assert msgs[3]["content"] == "Turn 2 question"
+

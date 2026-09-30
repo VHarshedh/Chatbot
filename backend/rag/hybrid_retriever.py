@@ -23,19 +23,37 @@ class HybridRetriever:
             if res:
                 kg_context += f"Knowledge Graph fact: The Water system uses type_map {res[0][0]} and temperature {res[0][1]}K.\n"
 
-        if any(w in q_lower for w in ["density", "rdf", "survival", "interfacial", "deepmd", "dp_models", "iro2", "neighbor"]):
+        from backend.notebooks.attach_to_notebook import is_anatase_water_molecular_prompt, is_anatase_tio2_prompt
+        is_mol = is_anatase_water_molecular_prompt(query)
+
+        if not is_mol and any(w in q_lower for w in ["density", "rdf", "survival", "interfacial", "deepmd", "dp_models", "neighbor"]):
             kg_context += (
                 "Domain Ground Truth:\n"
-                "- Reference implementation notebook: `Analysis/Water_Density_RDF_Survival_Probability_Hydroxyl_Fraction_with_IrO2_Template_Seperate_Plot_Capability.ipynb`.\n"
+                "- Grounded target notebook: `ChatBot/backend/notebooks/running.ipynb`.\n"
                 "- Atomic neighbor analysis & surface cutoffs: MUST use `from ase.neighborlist import neighbor_list, natural_cutoffs`.\n"
                 "- Trained DeepMD potential models: located at `Training/DP_Models/DPMD_Water/1/`, `Training/DP_Models/DPMD_Water/2/`, and `Training/DP_Models/DPMD_Water/3/`.\n"
                 "- Multi-model averaging: loop over models `list(range(1, dp + 1))` to compute cross-model mean and standard deviation.\n"
             )
+
+        if is_mol:
+            # File data must NOT be sent; notebook data must NOT be sent; only provide file location
+            kg_context += (
+                "Knowledge Graph Fact: Anatase TiO2 Molecular Water Trajectory File:\n"
+                "- File Location: `ChatBot/public/Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz` (Mounted read-only in Docker sandbox at `/mnt/data/Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz`).\n"
+                "- Load directly in code with ASE: `read('/mnt/data/Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz', index=':')` with safe fallback to `ChatBot/public/Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz`.\n"
+            )
+        elif is_anatase_tio2_prompt(query):
+            kg_context += (
+                "Knowledge Graph Fact: Anatase TiO2 Interface Notebook:\n"
+                "- Grounded target notebook: `ChatBot/backend/notebooks/running.ipynb`.\n"
+            )
                 
-        # 3. Fuse results
-        context = "--- Vector Store Context ---\n"
-        for i, res in enumerate(vs_results):
-            context += f"Result {i+1}:\n{res['content']}\n\n"
+        # 3. Fuse results (suppress notebook cells if molecular extxyz requested)
+        context = ""
+        if not is_mol:
+            context += "--- Vector Store Context ---\n"
+            for i, res in enumerate(vs_results):
+                context += f"Result {i+1}:\n{res['content']}\n\n"
             
         context += "--- Knowledge Graph & Domain Context ---\n"
         context += kg_context

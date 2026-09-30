@@ -11,7 +11,8 @@ from backend.db.models import (
     insert_prompt,
     update_prompt,
     delete_prompt,
-    reset_prompts
+    reset_prompts,
+    get_chat_history
 )
 
 @pytest.fixture
@@ -134,4 +135,46 @@ def test_prompts_crud_and_reset(memory_db):
     restored = reset_prompts()
     assert len(restored) == 5
     assert any(x["id"] == "interfacial_script_gen" for x in restored)
+
+def test_get_chat_history(memory_db):
+    assert get_chat_history(None) == []
+    assert get_chat_history(9999) == []
+
+    session_id = insert_session("Multi-turn Session")
+    insert_message(session_id, "user", "Question 1")
+    insert_message(session_id, "assistant", "Answer 1")
+    insert_message(session_id, "user", "Question 2")
+    insert_message(session_id, "assistant", "Answer 2")
+
+    history = get_chat_history(session_id)
+    assert len(history) == 4
+    assert history[0] == {"role": "user", "content": "Question 1"}
+    assert history[1] == {"role": "assistant", "content": "Answer 1"}
+    assert history[2] == {"role": "user", "content": "Question 2"}
+    assert history[3] == {"role": "assistant", "content": "Answer 2"}
+
+    # Limit check
+    limited = get_chat_history(session_id, limit=2)
+    assert len(limited) == 2
+    assert limited[0] == {"role": "user", "content": "Question 2"}
+    assert limited[1] == {"role": "assistant", "content": "Answer 2"}
+
+def test_get_chat_history_cleans_thinking(memory_db):
+    session_id = insert_session("Thinking Session")
+    raw_assistant_content = (
+        '<details class="thinking-details"><summary>Thinking</summary>\n'
+        'Step 1: Check TiO2 structure\n'
+        'Step 2: Formulate answer\n'
+        '</details>\n\n'
+        'Anatase TiO2 has tetragonal symmetry with space group I4_1/amd.'
+    )
+    insert_message(session_id, "user", "What is the space group of Anatase?")
+    insert_message(session_id, "assistant", raw_assistant_content)
+
+    history = get_chat_history(session_id)
+    assert len(history) == 2
+    assert history[0]["content"] == "What is the space group of Anatase?"
+    assert "<details" not in history[1]["content"]
+    assert "Anatase TiO2 has tetragonal symmetry" in history[1]["content"]
+
 

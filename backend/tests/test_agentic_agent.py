@@ -316,4 +316,63 @@ def test_chat_stream_step_2_streaming(mocker):
     content_deltas = [p["delta"] for p in parsed if p.get("type") == "content"]
     assert any("import ase" in c for c in content_deltas)
 
+def test_agentic_call_llm_with_history(mocker):
+    captured_payload = {}
+    def mock_post(url, json=None, **kwargs):
+        nonlocal captured_payload
+        captured_payload = json
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"message": {"content": "Answer with history."}}
+        return mock_resp
+
+    mocker.patch("requests.post", side_effect=mock_post)
+    mocker.patch("backend.agents.agentic_agent.HybridRetriever")
+
+    history = [
+        {"role": "user", "content": "What is Pt?"},
+        {"role": "assistant", "content": "Platinum is a transition metal."}
+    ]
+
+    agent = AgenticRAGAgent()
+    agent._call_llm("What is its density?", system_prompt="Custom System", history=history)
+
+    assert "messages" in captured_payload
+    msgs = captured_payload["messages"]
+    assert len(msgs) == 4
+    assert msgs[0]["role"] == "system"
+    assert msgs[1]["content"] == "What is Pt?"
+    assert msgs[2]["content"] == "Platinum is a transition metal."
+    assert msgs[3]["content"] == "What is its density?"
+
+def test_agentic_chat_stream_passes_history(mocker):
+    fake_history = [
+        {"role": "user", "content": "Previous question"},
+        {"role": "assistant", "content": "Previous answer"}
+    ]
+    mock_get_hist = mocker.patch("backend.agents.agentic_agent.get_chat_history", return_value=fake_history)
+    mocker.patch("backend.agents.agentic_agent.insert_message")
+    mocker.patch("backend.agents.agentic_agent.HybridRetriever")
+
+    called_kwargs = []
+    mock_resp = MagicMock()
+    mock_resp.iter_lines.return_value = [
+        json.dumps({"message": {"content": "Follow-up response"}}).encode("utf-8")
+    ]
+    def fake_call_llm(*args, **kwargs):
+        called_kwargs.append(kwargs)
+        return mock_resp
+
+    mocker.patch.object(AgenticRAGAgent, "_call_llm", side_effect=fake_call_llm)
+
+    agent = AgenticRAGAgent()
+    events = list(agent.chat_stream("Explain more about it", session_id=99))
+
+    assert mock_get_hist.called
+    assert mock_get_hist.call_args[1]["session_id"] == 99
+    assert len(called_kwargs) > 0
+    # Verified that history was passed to _call_llm
+    assert called_kwargs[-1].get("history") == fake_history
+
+
 

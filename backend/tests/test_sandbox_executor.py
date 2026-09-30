@@ -26,6 +26,7 @@ def test_sandbox_executor_run_python(mocker):
 
 def test_sandbox_executor_no_docker(mocker):
     mocker.patch("docker.from_env", side_effect=Exception("No docker"))
+    mocker.patch("shutil.which", return_value=None)
     executor = SandboxExecutor()
     res = executor.run_python_script("print('hi')")
     assert res["exit_code"] == 1

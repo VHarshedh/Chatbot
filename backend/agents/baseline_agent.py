@@ -1,10 +1,21 @@
+import os
 import re
 import time
 import json
 import requests
+from pathlib import Path
 from typing import Dict, Any, Optional, List
 from backend.config import settings
-from backend.db.models import insert_session, insert_message, execute_query
+from backend.db.models import insert_session, insert_message, execute_query, get_chat_history
+
+def _get_data_mount_path(text: str) -> Optional[str]:
+    root_dir = Path(__file__).resolve().parent.parent.parent
+    cand1 = root_dir / "public" / "Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz"
+    cand2 = root_dir / "ChatBot" / "public" / "Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz"
+    cand = cand1 if cand1.exists() else (cand2 if cand2.exists() else None)
+    if cand and any(w in text.lower() for w in ["anatase", "extxyz", "ti02", "tio2", "water molecular"]):
+        return str(cand)
+    return None
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are an expert computational materials scientist and chemist. "
@@ -43,10 +54,11 @@ class SingleShotAgent:
         self,
         prompt: str,
         system_prompt: Optional[str] = None,
-        images: Optional[List[str]] = None
+        images: Optional[List[str]] = None,
+        history: Optional[List[Dict[str, Any]]] = None
     ) -> Dict[str, Any]:
         """
-        Directly queries the Ollama /api/chat endpoint with no tool or RAG intervention.
+        Directly queries the Ollama /api/chat endpoint with conversation history.
         Streams chunks with num_ctx=4096 and timeout=(10, 600) to prevent read timeouts on CPU reasoning.
         """
         sys_prompt = system_prompt if system_prompt is not None else DEFAULT_SYSTEM_PROMPT
@@ -55,6 +67,15 @@ class SingleShotAgent:
         messages = []
         if sys_prompt:
             messages.append({"role": "system", "content": sys_prompt})
+        if history:
+            for hist_msg in history:
+                cleaned_hist = {"role": hist_msg["role"], "content": hist_msg["content"]}
+                if hist_msg.get("images"):
+                    cleaned_imgs = self._clean_images(hist_msg["images"])
+                    if cleaned_imgs:
+                        cleaned_hist["images"] = cleaned_imgs
+                messages.append(cleaned_hist)
+
         user_msg = {"role": "user", "content": prompt}
         cleaned_imgs = self._clean_images(images)
         if cleaned_imgs:
@@ -125,21 +146,53 @@ class SingleShotAgent:
             content = "".join(content_parts).strip()
             latency = round(time.time() - start_time, 3)
 
-            # Automatically attach script to Colab running.ipynb if Python code block is present
+            # Execute script in isolated Docker sandbox if Python code block is present
             code_match = re.search(r"```(?:python)?\s*([\s\S]*?)```", content)
             if code_match:
                 extracted = code_match.group(1).strip()
                 if extracted and len(extracted.splitlines()) >= 3:
                     try:
-                        from backend.notebooks.attach_to_notebook import attach_script_to_notebook
-                        nb_res = attach_script_to_notebook(extracted)
-                        content += (
+                        from backend.tools.sandbox_tools import run_python_in_sandbox
+                        from backend.notebooks.attach_to_notebook import is_anatase_water_molecular_prompt
+                        
+                        data_mount = _get_data_mount_path(prompt)
+                        sb_res = run_python_in_sandbox(extracted, data_mount_path=data_mount)
+                        
+                        exit_code = sb_res.get("exit_code", 1)
+                        stdout = sb_res.get("stdout", "").strip()
+                        stderr = sb_res.get("stderr", "").strip()
+                        artifacts = sb_res.get("artifacts", [])
+                        artifact_names = [os.path.basename(a) for a in artifacts]
+                        
+                        status_badge = "Success (Exit Code 0)" if exit_code == 0 else f"Failed (Exit Code {exit_code})"
+                        out_display = stdout if stdout else (stderr if stderr else "No console output.")
+                        
+                        sb_section = (
                             f"\n\n---\n\n"
-                            f"📓 **Colab Notebook Ready**: This script has been automatically attached to cell #{nb_res['target_cell_index'] + 1} "
-                            f"in `ChatBot/backend/notebooks/running.ipynb`. You can now open and run the notebook in Google Colab (or on Kaggle with T4x2 GPU)!"
+                            f"### 🐳 Secure Docker Sandbox Execution\n"
+                            f"- **Container Status**: {status_badge}\n"
+                            f"- **Environment**: Isolated `chatbox-sandbox:latest` (CPU, `--network none`, `--memory 2g`, `--pids-limit 50`, `--read-only`)\n"
                         )
-                    except Exception:
-                        pass
+                        if artifact_names:
+                            sb_section += f"- **Generated Artifacts**: {', '.join(artifact_names)}\n"
+                        sb_section += f"\n**Container Output**:\n```text\n{out_display}\n```"
+                        content += sb_section
+
+                        # Attach to Colab running.ipynb ONLY if not molecular extxyz
+                        is_mol = is_anatase_water_molecular_prompt(prompt)
+                        if not is_mol:
+                            try:
+                                from backend.notebooks.attach_to_notebook import attach_script_to_notebook
+                                nb_res = attach_script_to_notebook(extracted)
+                                content += (
+                                    f"\n\n"
+                                    f"📓 **Colab Notebook Ready**: This script has been automatically attached to cell #{nb_res['target_cell_index'] + 1} "
+                                    f"in `ChatBot/backend/notebooks/running.ipynb`. You can now open and run the notebook in Google Colab (or on Kaggle with T4x2 GPU)!"
+                                )
+                            except Exception:
+                                pass
+                    except Exception as e:
+                        content += f"\n\n---\n\n*Sandbox Notice: {e}*"
 
             if content and thinking:
                 final_text = f"<details class=\"thinking-details\"><summary><em>Thinking Process ({len(thinking.split())} words)</em></summary>\n\n{thinking}\n</details>\n\n{content}"
@@ -188,6 +241,9 @@ class SingleShotAgent:
         """
         Processes a chat turn, tracks session history in SQLite, and returns the response.
         """
+        # Fetch previous conversation history for this session before inserting current message
+        history = get_chat_history(session_id=session_id) if session_id else []
+
         # Create session if none provided
         if not session_id:
             title = user_message[:40] + ("..." if len(user_message) > 40 else "")
@@ -202,8 +258,8 @@ class SingleShotAgent:
             images_json=json.dumps(images) if images else None
         )
 
-        # Generate direct single-shot response
-        result = self.generate_response(user_message, system_prompt=system_prompt, images=images)
+        # Generate response grounded on chat history
+        result = self.generate_response(user_message, system_prompt=system_prompt, images=images, history=history)
 
         # Log assistant message
         if result["status"] == "success":
@@ -229,6 +285,9 @@ class SingleShotAgent:
         Persists user and assistant messages in SQLite upon stream completion.
         """
         start_time = time.time()
+        # Fetch previous conversation history for this session before inserting current message
+        history = get_chat_history(session_id=session_id) if session_id else []
+
         if not session_id:
             title = user_message[:40] + ("..." if len(user_message) > 40 else "")
             session_id = insert_session(title=title)
@@ -247,6 +306,15 @@ class SingleShotAgent:
         messages = []
         if sys_prompt:
             messages.append({"role": "system", "content": sys_prompt})
+        if history:
+            for hist_msg in history:
+                cleaned_hist = {"role": hist_msg["role"], "content": hist_msg["content"]}
+                if hist_msg.get("images"):
+                    cleaned_imgs = self._clean_images(hist_msg["images"])
+                    if cleaned_imgs:
+                        cleaned_hist["images"] = cleaned_imgs
+                messages.append(cleaned_hist)
+
         user_msg = {"role": "user", "content": user_message}
         cleaned_imgs = self._clean_images(images)
         if cleaned_imgs:
@@ -326,24 +394,63 @@ class SingleShotAgent:
             thinking = "".join(thinking_parts).strip()
             content = "".join(content_parts).strip()
 
-            # Automatically attach script to Colab running.ipynb if Python code block is present
+            # Execute script in isolated Docker sandbox if Python code block is present
             code_match = re.search(r"```(?:python)?\s*([\s\S]*?)```", content)
             notebook_info = None
             if code_match:
                 extracted = code_match.group(1).strip()
                 if extracted and len(extracted.splitlines()) >= 3:
                     try:
-                        from backend.notebooks.attach_to_notebook import attach_script_to_notebook
-                        notebook_info = attach_script_to_notebook(extracted)
-                        notice = (
+                        from backend.tools.sandbox_tools import run_python_in_sandbox
+                        from backend.notebooks.attach_to_notebook import is_anatase_water_molecular_prompt
+                        
+                        data_mount = _get_data_mount_path(user_message)
+                        sb_res = run_python_in_sandbox(extracted, data_mount_path=data_mount)
+                        
+                        exit_code = sb_res.get("exit_code", 1)
+                        stdout = sb_res.get("stdout", "").strip()
+                        stderr = sb_res.get("stderr", "").strip()
+                        artifacts = sb_res.get("artifacts", [])
+                        artifact_names = [os.path.basename(a) for a in artifacts]
+                        
+                        if artifacts:
+                            yield f"data: {json.dumps({'type': 'artifacts', 'artifacts': artifact_names, 'artifact_paths': artifacts})}\n\n"
+                        
+                        status_badge = "Success (Exit Code 0)" if exit_code == 0 else f"Failed (Exit Code {exit_code})"
+                        out_display = stdout if stdout else (stderr if stderr else "No console output.")
+                        
+                        sb_section = (
                             f"\n\n---\n\n"
-                            f"📓 **Colab Notebook Ready**: This script has been automatically attached to cell #{notebook_info['target_cell_index'] + 1} "
-                            f"in `ChatBot/backend/notebooks/running.ipynb`. You can now open and run the notebook in Google Colab (or on Kaggle with T4x2 GPU)!"
+                            f"### 🐳 Secure Docker Sandbox Execution\n"
+                            f"- **Container Status**: {status_badge}\n"
+                            f"- **Environment**: Isolated `chatbox-sandbox:latest` (CPU, `--network none`, `--memory 2g`, `--pids-limit 50`, `--read-only`)\n"
                         )
-                        content += notice
-                        yield f"data: {json.dumps({'type': 'content', 'delta': notice})}\n\n"
+                        if artifact_names:
+                            sb_section += f"- **Generated Artifacts**: {', '.join(artifact_names)}\n"
+                        sb_section += f"\n**Container Output**:\n```text\n{out_display}\n```"
+                        
+                        content += sb_section
+                        yield f"data: {json.dumps({'type': 'content', 'delta': sb_section})}\n\n"
+                        
+                        # Attach to Colab running.ipynb ONLY if not molecular extxyz
+                        is_mol = is_anatase_water_molecular_prompt(user_message)
+                        if not is_mol:
+                            try:
+                                from backend.notebooks.attach_to_notebook import attach_script_to_notebook
+                                notebook_info = attach_script_to_notebook(extracted)
+                                notice = (
+                                    f"\n\n"
+                                    f"📓 **Colab Notebook Ready**: This script has been automatically attached to cell #{notebook_info['target_cell_index'] + 1} "
+                                    f"in `ChatBot/backend/notebooks/running.ipynb`. You can now open and run the notebook in Google Colab (or on Kaggle with T4x2 GPU)!"
+                                )
+                                content += notice
+                                yield f"data: {json.dumps({'type': 'content', 'delta': notice})}\n\n"
+                            except Exception as e:
+                                notebook_info = {"status": "error", "error": str(e)}
                     except Exception as e:
-                        notebook_info = {"status": "error", "error": str(e)}
+                        notice_err = f"\n\n---\n\n*Sandbox Notice: {e}*"
+                        content += notice_err
+                        yield f"data: {json.dumps({'type': 'content', 'delta': notice_err})}\n\n"
 
             if content and thinking:
                 final_text = f"<details class=\"thinking-details\"><summary><em>Thinking Process ({len(thinking.split())} words)</em></summary>\n\n{thinking}\n</details>\n\n{content}"

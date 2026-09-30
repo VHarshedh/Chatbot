@@ -29,7 +29,8 @@ from backend.notebooks.attach_to_notebook import (
     attach_script_to_notebook,
     get_latest_evaluation_code,
     extract_notebook_context,
-    format_notebook_context_prompt
+    format_notebook_context_prompt,
+    resolve_prompt_context
 )
 
 app = FastAPI(title="Scientific Computing Chatbox API", version="1.0.0")
@@ -38,6 +39,10 @@ app = FastAPI(title="Scientific Computing Chatbox API", version="1.0.0")
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 FRONTEND_DIR.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
+
+PUBLIC_DIR = Path(__file__).parent.parent / "public"
+PUBLIC_DIR.mkdir(exist_ok=True)
+app.mount("/public", StaticFiles(directory=str(PUBLIC_DIR)), name="public")
 
 class ChatRequest(BaseModel):
     message: str
@@ -163,7 +168,7 @@ def chat_endpoint(request: ChatRequest):
     has_text = bool(request.message and request.message.strip())
     has_images = bool(request.images and len(request.images) > 0)
     if not has_text and not has_images:
-        raise HTTPException(status_code=400, detail="Message or attached image cannot be empty.")
+        raise HTTPException(status_code=400, detail="Message cannot be empty.")
 
     if request.mode in ["agentic", "agentic_rag"]:
         agent = AgenticRAGAgent()
@@ -172,14 +177,13 @@ def chat_endpoint(request: ChatRequest):
 
     raw_text = request.message.strip() if has_text else "Please analyze this attached scientific image / structure for materials science insights."
     user_msg = raw_text
-    if request.include_notebook_context is True or (
-        request.include_notebook_context is None and any(kw in user_msg.lower() for kw in ["running.ipynb", "notebook", "extxyz", "traj", "anatase", "density profile", "survival probability", "simulation script"])
-    ):
+    if request.include_notebook_context is not False:
         try:
             nb_name = request.notebook_name or "running.ipynb"
-            nb_path = Path(__file__).parent / "notebooks" / nb_name
-            nb_ctx = extract_notebook_context(str(nb_path))
-            user_msg = f"{format_notebook_context_prompt(nb_ctx)}\n\n--- USER REQUEST ---\n{raw_text}"
+            nb_path = str(Path(__file__).parent / "notebooks" / nb_name)
+            resolved = resolve_prompt_context(raw_text, nb_path)
+            if resolved["matched_type"] != "none" or request.include_notebook_context is True:
+                user_msg = resolved["augmented_prompt"]
         except Exception:
             pass
 
@@ -197,7 +201,7 @@ def chat_stream_endpoint(request: ChatRequest):
     has_text = bool(request.message and request.message.strip())
     has_images = bool(request.images and len(request.images) > 0)
     if not has_text and not has_images:
-        raise HTTPException(status_code=400, detail="Message or attached image cannot be empty.")
+        raise HTTPException(status_code=400, detail="Message cannot be empty.")
 
     if request.mode in ["agentic", "agentic_rag"]:
         agent = AgenticRAGAgent()
@@ -206,14 +210,13 @@ def chat_stream_endpoint(request: ChatRequest):
 
     raw_text = request.message.strip() if has_text else "Please analyze this attached scientific image / structure for materials science insights."
     user_msg = raw_text
-    if request.include_notebook_context is True or (
-        request.include_notebook_context is None and any(kw in user_msg.lower() for kw in ["running.ipynb", "notebook", "extxyz", "traj", "anatase", "density profile", "survival probability", "simulation script"])
-    ):
+    if request.include_notebook_context is not False:
         try:
             nb_name = request.notebook_name or "running.ipynb"
-            nb_path = Path(__file__).parent / "notebooks" / nb_name
-            nb_ctx = extract_notebook_context(str(nb_path))
-            user_msg = f"{format_notebook_context_prompt(nb_ctx)}\n\n--- USER REQUEST ---\n{raw_text}"
+            nb_path = str(Path(__file__).parent / "notebooks" / nb_name)
+            resolved = resolve_prompt_context(raw_text, nb_path)
+            if resolved["matched_type"] != "none" or request.include_notebook_context is True:
+                user_msg = resolved["augmented_prompt"]
         except Exception:
             pass
 
@@ -313,14 +316,16 @@ def evaluate_zero_shot_stream_endpoint(request: EvaluationRequest):
 
             notebook_attach_result = None
             if evaluation.get("extracted_code"):
-                try:
-                    notebook_attach_result = attach_script_to_notebook(
-                        code=evaluation["extracted_code"],
-                        notebook_path=str(nb_path),
-                        replace_placeholder=True
-                    )
-                except Exception as e:
-                    notebook_attach_result = {"status": "error", "error": str(e)}
+                from backend.notebooks.attach_to_notebook import is_anatase_water_molecular_prompt
+                if not is_anatase_water_molecular_prompt(base_prompt):
+                    try:
+                        notebook_attach_result = attach_script_to_notebook(
+                            code=evaluation["extracted_code"],
+                            notebook_path=str(nb_path),
+                            replace_placeholder=True
+                        )
+                    except Exception as e:
+                        notebook_attach_result = {"status": "error", "error": str(e)}
 
             eval_event = {
                 "type": "eval_complete",
@@ -419,14 +424,16 @@ def evaluate_zero_shot_endpoint(request: EvaluationRequest):
 
     notebook_attach_result = None
     if evaluation.get("extracted_code"):
-        try:
-            notebook_attach_result = attach_script_to_notebook(
-                code=evaluation["extracted_code"],
-                notebook_path=str(nb_path),
-                replace_placeholder=True
-            )
-        except Exception as e:
-            notebook_attach_result = {"status": "error", "error": str(e)}
+        from backend.notebooks.attach_to_notebook import is_anatase_water_molecular_prompt
+        if not is_anatase_water_molecular_prompt(base_prompt):
+            try:
+                notebook_attach_result = attach_script_to_notebook(
+                    code=evaluation["extracted_code"],
+                    notebook_path=str(nb_path),
+                    replace_placeholder=True
+                )
+            except Exception as e:
+                notebook_attach_result = {"status": "error", "error": str(e)}
 
     return {
         "status": "success",

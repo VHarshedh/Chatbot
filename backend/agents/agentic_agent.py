@@ -1,3 +1,4 @@
+import os
 import json
 import re
 import time
@@ -7,7 +8,7 @@ from backend.config import settings
 from backend.rag.hybrid_retriever import HybridRetriever
 from backend.tools.sandbox_tools import run_python_in_sandbox
 from backend.tools.web_tools import search_web
-from backend.db.models import insert_session, insert_message
+from backend.db.models import insert_session, insert_message, get_chat_history
 
 class AgenticRAGAgent:
     """
@@ -29,7 +30,8 @@ class AgenticRAGAgent:
             r"\b(run|execute|compute|calculate|simulate|plot)\b",
             r"\b(python script|code block|simulation script)\b",
             r"\b(density profile|radial distribution|rdf|survival probability)\b",
-            r"\b(extxyz|trajectory|deepmd model|lammps)\b"
+            r"\b(extxyz|trajectory|deepmd model|lammps)\b",
+            r"\b(docker|container|graph|containment|anatase|ti02|tio2)\b"
         ]
         return any(re.search(p, lower) for p in patterns)
 
@@ -54,11 +56,21 @@ class AgenticRAGAgent:
         system_prompt: Optional[str] = None,
         stream: bool = False,
         timeout: int = 3600,
-        images: Optional[List[str]] = None
+        images: Optional[List[str]] = None,
+        history: Optional[List[Dict[str, Any]]] = None
     ):
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
+        if history:
+            for hist_msg in history:
+                cleaned_hist = {"role": hist_msg["role"], "content": hist_msg["content"]}
+                if hist_msg.get("images"):
+                    cleaned_imgs = self._clean_images(hist_msg["images"])
+                    if cleaned_imgs:
+                        cleaned_hist["images"] = cleaned_imgs
+                messages.append(cleaned_hist)
+
         user_msg = {"role": "user", "content": prompt}
         cleaned_imgs = self._clean_images(images)
         if cleaned_imgs:
@@ -97,6 +109,8 @@ class AgenticRAGAgent:
         - Step 3: Streamed response synthesis
         """
         start_time = time.time()
+        # Fetch previous conversation history for this session before inserting current message
+        history = get_chat_history(session_id=session_id) if session_id else []
 
         if not session_id:
             title = user_message[:40] + ("..." if len(user_message) > 40 else "")
@@ -121,7 +135,13 @@ class AgenticRAGAgent:
         
         context = ""
         try:
-            context = str(self.retriever.retrieve(user_message))
+            retrieval_query = user_message
+            if history:
+                last_user_msg = next((h["content"] for h in reversed(history) if h["role"] == "user"), "")
+                anaphoric_words = ["it", "its", "this", "these", "that", "those", "same", "previous", "earlier", "above"]
+                if any(w in user_message.lower().split() for w in anaphoric_words) and last_user_msg:
+                    retrieval_query = f"{last_user_msg}\n{user_message}"
+            context = str(self.retriever.retrieve(retrieval_query))
             rag_snippet = context[:400] + ("..." if len(context) > 400 else "")
             rag_step = {"type": "agent_step", "step": "rag_complete", "title": "Hybrid RAG Retrieval", "status": "completed", "details": rag_snippet}
             trace_steps.append(rag_step)
@@ -142,38 +162,75 @@ class AgenticRAGAgent:
         eval_count = 0
 
         if execution_requested:
-            cg_start = {"type": "agent_step", "step": "code_gen_start", "title": "Script Synthesis", "status": "running", "details": "Synthesizing Python analysis script using running.ipynb context & RAG..."}
+            from backend.notebooks.attach_to_notebook import (
+                is_anatase_water_molecular_prompt,
+                is_anatase_tio2_prompt,
+                extract_notebook_context,
+                format_notebook_context_prompt,
+                attach_script_to_notebook
+            )
+            is_mol = is_anatase_water_molecular_prompt(user_message)
+
+            cg_start = {"type": "agent_step", "step": "code_gen_start", "title": "Script Synthesis", "status": "running", "details": "Synthesizing Python analysis script..."}
             trace_steps.append(cg_start)
             yield f"data: {json.dumps(cg_start)}\n\n"
 
             nb_context_section = ""
-            try:
-                from backend.notebooks.attach_to_notebook import extract_notebook_context, format_notebook_context_prompt
-                nb_ctx = extract_notebook_context()
-                nb_context_section = f"{format_notebook_context_prompt(nb_ctx)}\n\n"
-            except Exception:
-                pass
+            if not is_mol:
+                try:
+                    nb_ctx = extract_notebook_context()
+                    nb_context_section = f"{format_notebook_context_prompt(nb_ctx)}\n\n"
+                except Exception:
+                    pass
+
+            data_mount_path = None
+            data_mount_inst = ""
+            from pathlib import Path
+            root_dir = Path(__file__).resolve().parent.parent.parent
+            cand1 = root_dir / "public" / "Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz"
+            cand2 = root_dir / "ChatBot" / "public" / "Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz"
+            anatase_extxyz = cand1 if cand1.exists() else (cand2 if cand2.exists() else None)
+
+            if is_mol and anatase_extxyz:
+                data_mount_path = str(anatase_extxyz)
+                data_mount_inst = (
+                    "7. Trajectory dataset `Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz` is mounted inside the Docker container at `/mnt/data/Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz`.\n"
+                    "   Load directly with ASE: `read('/mnt/data/Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz', index=':')` with safe fallback to `ChatBot/public/Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz`.\n"
+                    "   Calculate total energy, potential energy diagram/profile, structural metrics, and save presentation graph `anatase_tio2_water_analysis.png` in the current working directory.\n"
+                )
+            elif anatase_extxyz and any(w in user_message.lower() for w in ["anatase", "extxyz", "ti02", "tio2"]):
+                data_mount_path = str(anatase_extxyz)
+
+            if is_mol:
+                grounding_requirement = "1. Load the trajectory file directly from `/mnt/data/Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz` using ASE `read(...)`. Do not assume variables are pre-loaded in memory."
+            else:
+                grounding_requirement = "1. Ground your script on the target notebook `running.ipynb` alone (pre-loaded `traj` variable in memory from `/content/MPtrj/...`)."
+
+            history_section = ""
+            if history:
+                prev_msgs = [f"{h['role'].upper()}: {h['content'][:300]}" for h in history[-4:]]
+                history_section = "--- PREVIOUS CHAT CONTEXT ---\n" + "\n".join(prev_msgs) + "\n\n"
 
             code_prompt = f"""You are an expert computational materials science Python developer.
-Based on the following execution context from the target notebook `running.ipynb` and retrieved domain context from workspace Jupyter notebooks, write a complete, robust, executable Python script to address the user request.
+Based on the execution context and retrieved domain context from workspace Jupyter notebooks, write a complete, robust, executable Python script to address the user request.
 
-{nb_context_section}--- RETRIEVED WORKSPACE NOTEBOOK CONTEXT ---
+{history_section}{nb_context_section}--- RETRIEVED WORKSPACE NOTEBOOK CONTEXT ---
 {context}
 
 --- USER REQUEST ---
 {user_message}
 
 CRITICAL IMPLEMENTATION REQUIREMENTS:
-1. Ground your script on the target notebook `running.ipynb` (pre-loaded `traj` variable in memory from `/content/MPtrj/...`).
+{grounding_requirement}
 2. For interfacial site identification, neighbor searches, and distance cutoffs, you MUST use `ase.neighborlist` (specifically `from ase.neighborlist import neighbor_list, natural_cutoffs` or `NeighborList`).
 3. For multi-model DP averaging, reference the trained DeepMD potential models located at `Training/DP_Models/DPMD_Water/1/`, `Training/DP_Models/DPMD_Water/2/`, and `Training/DP_Models/DPMD_Water/3/`.
-4. Variable `traj` is already loaded in `running.ipynb`. You can safely access `traj` directly or load from `traj_file`.
+4. Output ONLY valid executable Python code in a ```python ... ``` block. Use ASE, NumPy, and Matplotlib.
 5. Get straight to the point and do not beat around the bush. Do not include introductory pleasantries or explanations.
-6. Output ONLY valid executable Python code in a ```python ... ``` block. Use ASE, NumPy, and Matplotlib."""
+{data_mount_inst}"""
 
             try:
                 code_response_parts = []
-                res = self._call_llm(code_prompt, stream=True, timeout=3600)
+                res = self._call_llm(code_prompt, stream=True, timeout=3600, history=history)
                 if hasattr(res, "raise_for_status"):
                     res.raise_for_status()
 
@@ -228,10 +285,9 @@ CRITICAL IMPLEMENTATION REQUIREMENTS:
                 trace_steps.append(cg_done)
                 yield f"data: {json.dumps(cg_done)}\n\n"
 
-                # Automatically attach script to Colab running.ipynb
-                if code_extracted:
+                # Automatically attach script to Colab running.ipynb ONLY when not molecular extxyz
+                if code_extracted and not is_mol:
                     try:
-                        from backend.notebooks.attach_to_notebook import attach_script_to_notebook
                         nb_attach = attach_script_to_notebook(code_extracted)
                         nb_step = {
                             "type": "agent_step",
@@ -250,11 +306,17 @@ CRITICAL IMPLEMENTATION REQUIREMENTS:
                 trace_steps.append(sb_start)
                 yield f"data: {json.dumps(sb_start)}\n\n"
                 
-                sandbox_res = run_python_in_sandbox(code_extracted)
+                sandbox_res = run_python_in_sandbox(code_extracted, data_mount_path=data_mount_path)
                 if sandbox_res["exit_code"] == 0:
                     sandbox_output = sandbox_res["stdout"]
                     artifacts = sandbox_res.get("artifacts", [])
-                    sb_done = {"type": "agent_step", "step": "sandbox_complete", "title": "Docker Sandbox Execution", "status": "completed", "details": f"Exit code 0 (Success). Output: {sandbox_output[:200]}"}
+                    artifact_names = [os.path.basename(a) for a in artifacts]
+                    if artifacts:
+                        yield f"data: {json.dumps({'type': 'artifacts', 'artifacts': artifact_names, 'artifact_paths': artifacts})}\n\n"
+                    details_str = f"Exit code 0 (Success). Output: {sandbox_output[:120]}"
+                    if artifact_names:
+                        details_str += f" | Generated: {', '.join(artifact_names)}"
+                    sb_done = {"type": "agent_step", "step": "sandbox_complete", "title": "Docker Sandbox Execution", "status": "completed", "details": details_str}
                     trace_steps.append(sb_done)
                     yield f"data: {json.dumps(sb_done)}\n\n"
                 else:
@@ -285,18 +347,24 @@ Write the corrected Python code block only."""
                     fixed_code_match = re.search(r"```(?:python)?\s*([\s\S]*?)```", fix_res.json().get("message", {}).get("content", ""))
                     if fixed_code_match:
                         code_extracted = fixed_code_match.group(1).strip()
-                        try:
-                            from backend.notebooks.attach_to_notebook import attach_script_to_notebook
-                            attach_script_to_notebook(code_extracted)
-                        except Exception:
-                            pass
+                        if not is_mol:
+                            try:
+                                attach_script_to_notebook(code_extracted)
+                            except Exception:
+                                pass
                     
                     # Second execution attempt
-                    retry_res = run_python_in_sandbox(code_extracted)
+                    retry_res = run_python_in_sandbox(code_extracted, data_mount_path=data_mount_path)
                     sandbox_output = retry_res.get("stdout", "") or retry_res.get("stderr", "")
                     artifacts = retry_res.get("artifacts", [])
+                    artifact_names = [os.path.basename(a) for a in artifacts]
+                    if artifacts:
+                        yield f"data: {json.dumps({'type': 'artifacts', 'artifacts': artifact_names, 'artifact_paths': artifacts})}\n\n"
                     retry_exit = retry_res.get("exit_code", 1)
-                    sb_re_done = {"type": "agent_step", "step": "sandbox_complete", "title": "Docker Sandbox Re-execution", "status": "completed", "details": f"Self-correction finished (Exit {retry_exit})."}
+                    re_details = f"Self-correction finished (Exit {retry_exit})."
+                    if artifact_names:
+                        re_details += f" | Generated: {', '.join(artifact_names)}"
+                    sb_re_done = {"type": "agent_step", "step": "sandbox_complete", "title": "Docker Sandbox Re-execution", "status": "completed", "details": re_details}
                     trace_steps.append(sb_re_done)
                     yield f"data: {json.dumps(sb_re_done)}\n\n"
 
@@ -310,9 +378,15 @@ Write the corrected Python code block only."""
         trace_steps.append(syn_start)
         yield f"data: {json.dumps(syn_start)}\n\n"
 
+        from backend.notebooks.attach_to_notebook import is_anatase_water_molecular_prompt
+        if is_anatase_water_molecular_prompt(user_message):
+            conclusion_inst = "Conclude by summarizing the verified Docker container execution results and generated presentation plots, noting that execution ran strictly inside the isolated Docker sandbox environment without modifying any notebook."
+        else:
+            conclusion_inst = "Conclude by explicitly informing the user that their complete analysis script has been attached to `ChatBot/backend/notebooks/running.ipynb` and they can now execute the notebook in Google Colab (or on Kaggle with T4x2 GPU)."
+
         synthesis_prompt = f"""You are SciCompute AI, an autonomous scientific materials & chemistry assistant.
 You possess direct access to:
-1. Grounded workspace Jupyter notebooks (.ipynb) and trained DeepMD models in `Training/DP_Models/DPMD_Water/1/`, `Training/DP_Models/DPMD_Water/2/`, and `Training/DP_Models/DPMD_Water/3/`.
+1. Grounded target notebook `ChatBot/backend/notebooks/running.ipynb` and trained DeepMD models in `Training/DP_Models/DPMD_Water/1/`, `Training/DP_Models/DPMD_Water/2/`, and `Training/DP_Models/DPMD_Water/3/`.
 2. A secure Docker Sandbox Execution Environment where code is tested and verified on CPU/GPU.
 3. Web search tools (via DuckDuckGo) for real-time documentation and syntax verification.
 
@@ -323,12 +397,13 @@ NEVER claim you lack an execution environment, cannot run code, or cannot access
 
 --- EXECUTION ARTIFACTS & OUTPUT ---
 {f'Execution Output:\n{sandbox_output}' if sandbox_output else 'Sandboxed environment and tools are active and available.'}
+{f'Generated Artifacts (Graphs/Plots): {", ".join([os.path.basename(a) for a in artifacts])}' if artifacts else ''}
 {f'Generated Code:\n```python\n{code_extracted}\n```' if code_extracted else ''}
 
 User Query:
 {user_message}
 
-Get straight to the point and do not beat around the bush. Eliminate pleasantries and conversational filler. Provide a well-structured, rigorous response with clear headings, KaTeX LaTeX math formulas ($...$ for inline, $$...$$ for display blocks), and code blocks using `ase.neighborlist` where appropriate. Conclude by explicitly informing the user that their complete analysis script has been attached to `ChatBot/backend/notebooks/running.ipynb` and they can now execute the notebook in Google Colab (or on Kaggle with T4x2 GPU)."""
+Get straight to the point and do not beat around the bush. Eliminate pleasantries and conversational filler. Provide a well-structured, rigorous response with clear headings, KaTeX LaTeX math formulas ($...$ for inline, $$...$$ for display blocks), and code blocks using `ase.neighborlist` where appropriate. {conclusion_inst}"""
 
         if code_extracted and content_parts:
             divider = "\n\n---\n\n### Scientific Synthesis & Findings\n\n"
@@ -347,7 +422,8 @@ Get straight to the point and do not beat around the bush. Eliminate pleasantrie
                 system_prompt=system_prompt or default_sys,
                 stream=True,
                 timeout=3600,
-                images=images
+                images=images,
+                history=history
             )
             stream_res.raise_for_status()
 

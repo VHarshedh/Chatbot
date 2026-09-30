@@ -1,6 +1,7 @@
 import sqlite3
 from typing import List, Dict, Any, Optional
 import json
+import re
 from backend.config import settings
 
 INTERFACIAL_ANALYSIS_BENCHMARK_PROMPT = (
@@ -103,6 +104,86 @@ def insert_message(
     )
     conn.commit()
     conn.close()
+
+def get_chat_history(
+    session_id: Optional[int],
+    limit: int = 20,
+    before_message_id: Optional[int] = None
+) -> List[Dict[str, Any]]:
+    """
+    Retrieves previous conversational messages for a session formatted for LLM context.
+    Returns list of dicts: [{"role": "user"|"assistant", "content": "..."}] in chronological order.
+    Cleans out collapsible UI artifacts like thinking traces from assistant responses to avoid prompt bloat.
+    """
+    if not session_id:
+        return []
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='messages'")
+        if not cursor.fetchone():
+            conn.close()
+            return []
+
+        cursor.execute("PRAGMA table_info(messages)")
+        columns = [col[1] for col in cursor.fetchall()]
+        has_images_col = "images_json" in columns
+
+        if before_message_id is not None:
+            select_cols = "id, role, content, images_json" if has_images_col else "id, role, content"
+            cursor.execute(
+                f"""
+                SELECT {select_cols}
+                FROM messages
+                WHERE session_id = ? AND id < ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (session_id, before_message_id, limit)
+            )
+        else:
+            select_cols = "id, role, content, images_json" if has_images_col else "id, role, content"
+            cursor.execute(
+                f"""
+                SELECT {select_cols}
+                FROM messages
+                WHERE session_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (session_id, limit)
+            )
+        rows = cursor.fetchall()
+        conn.close()
+
+        history = []
+        for row in reversed(rows):
+            role = row["role"]
+            content = row["content"] or ""
+
+            # Clean thinking block from assistant messages if present so it doesn't inflate context
+            if role == "assistant" and content:
+                cleaned = re.sub(r'<details class="thinking-details">.*?</details>', '', content, flags=re.DOTALL).strip()
+                if cleaned:
+                    content = cleaned
+
+            msg = {"role": role, "content": content}
+
+            if role == "user" and has_images_col:
+                imgs_raw = row["images_json"]
+                if imgs_raw:
+                    try:
+                        imgs = json.loads(imgs_raw)
+                        if imgs and isinstance(imgs, list):
+                            msg["images"] = imgs
+                    except Exception:
+                        pass
+            history.append(msg)
+        return history
+    except Exception as e:
+        print(f"Notice: Failed to fetch chat history for session {session_id}: {e}")
+        return []
 
 def _ensure_evaluations_table(cursor):
     cursor.execute(

@@ -163,3 +163,53 @@ def test_api_get_notebook_context_endpoint():
     assert "context" in data
     assert "formatted_prompt" in data
     assert data["context"]["has_preloaded_traj"] is True
+
+def test_resolve_prompt_context_anatase_extxyz():
+    from backend.notebooks.attach_to_notebook import (
+        is_anatase_water_molecular_prompt,
+        is_anatase_tio2_prompt,
+        resolve_prompt_context
+    )
+
+    # Test prompt with 'anatase ti02 water molecular' (with zero)
+    prompt1 = "Can you analyze the anatase ti02 water molecular system?"
+    assert is_anatase_water_molecular_prompt(prompt1) is True
+    res1 = resolve_prompt_context(prompt1)
+    assert res1["matched_type"] == "extxyz"
+    assert res1["data_file_path"] is not None
+    assert "Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz" in res1["augmented_prompt"]
+    assert "/mnt/data/Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz" in res1["augmented_prompt"]
+    # File data must NOT be sent
+    assert "426 atoms" not in res1["augmented_prompt"]
+    assert "H164O202Ti60" not in res1["augmented_prompt"]
+    assert "energy =" not in res1["augmented_prompt"]
+    # Notebook context must NOT be sent and must NOT attach
+    assert res1["notebook_context"] is None
+    assert res1["attach_to_notebook"] is False
+
+    # Test prompt with 'anatase tio2 water molecular' (with letter o)
+    prompt2 = "Please run analysis on anatase tio2 water molecular adsorption"
+    assert is_anatase_water_molecular_prompt(prompt2) is True
+    res2 = resolve_prompt_context(prompt2)
+    assert res2["matched_type"] == "extxyz"
+    assert "Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz" in res2["augmented_prompt"]
+    assert res2["notebook_context"] is None
+    assert res2["attach_to_notebook"] is False
+
+def test_resolve_prompt_context_anatase_tio2_notebook():
+    from backend.notebooks.attach_to_notebook import (
+        is_anatase_water_molecular_prompt,
+        is_anatase_tio2_prompt,
+        resolve_prompt_context
+    )
+
+    # Test prompt with just 'anatase tio2' (no water molecular)
+    prompt = "Please setup an analysis for anatase tio2"
+    assert is_anatase_water_molecular_prompt(prompt) is False
+    assert is_anatase_tio2_prompt(prompt) is True
+
+    res = resolve_prompt_context(prompt)
+    assert res["matched_type"] == "notebook"
+    assert res["data_file_path"] is None
+    assert "running.ipynb" in res["augmented_prompt"]
+

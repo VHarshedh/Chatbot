@@ -219,6 +219,120 @@ def format_notebook_context_prompt(context: Dict[str, Any]) -> str:
         f"- Output ONLY valid, executable Python code in a ```python ... ``` block. No conversational preamble or fluff."
     )
 
+def is_anatase_water_molecular_prompt(prompt: str) -> bool:
+    """
+    Checks if the user prompt mentions anatase ti02 water molecular
+    (case-insensitive, matching 'anatase', 'tio2' or 'ti02', 'water', and 'molecular',
+    or referencing Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz).
+    """
+    if not prompt:
+        return False
+    p = prompt.lower()
+    if "anatase_tio2_water_molecularadsorbedwater" in p:
+        return True
+    has_anatase = "anatase" in p
+    has_tio2 = "tio2" in p or "ti02" in p or "ti-o2" in p or "ti-02" in p or "titanium dioxide" in p
+    has_water = "water" in p or "h2o" in p or "extxyz" in p
+    has_molecular = "molecular" in p or "adsorbed" in p
+    return has_anatase and has_tio2 and has_water and has_molecular
+
+def is_anatase_tio2_prompt(prompt: str) -> bool:
+    """
+    Checks if the prompt mentions anatase tio2/ti02 (without requiring water molecular).
+    """
+    if not prompt:
+        return False
+    p = prompt.lower()
+    has_anatase = "anatase" in p
+    has_tio2 = "tio2" in p or "ti02" in p or "ti-o2" in p or "ti-02" in p or "titanium dioxide" in p
+    return has_anatase and has_tio2
+
+def format_anatase_extxyz_context_prompt() -> str:
+    """
+    Formats the context prompt for Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz.
+    Provides ONLY the file location and sandbox mount path without sending pre-computed
+    atomic data, energy values, or lattice specifications.
+    """
+    return (
+        "### AVAILABLE STRUCTURE FILE: `Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz`\n"
+        "The atomic trajectory / structure file is available at:\n"
+        "- Docker Sandbox Mount Path: `/mnt/data/Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz`\n"
+        "- Host/Workspace Path: `ChatBot/public/Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz`\n\n"
+        "Execution Guidelines:\n"
+        "- Load with ASE: `traj = read('/mnt/data/Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz', index=':')` (where `atoms = traj[0]` if `traj` is a list) or `atoms = read('...', index=0)`.\n"
+        "- In extended XYZ, total energy is accessible via `atoms.get_potential_energy()` or `atoms.info.get('energy')`.\n"
+        "- Execute all calculations and plot generation inside the isolated Docker sandbox container.\n"
+    )
+
+def resolve_prompt_context(raw_text: str, notebook_path: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Evaluates user prompt text against domain rules:
+    - If prompt mentions 'anatase ti02 water molecular' -> provides ONLY the extxyz file location.
+      The file's internal data is not sent, and notebook data is NOT sent. Does not attach to notebook.
+    - If prompt just mentions 'anatase tio2' alone (for RDF, density, etc.) -> makes the notebook available
+      and attaches code to running.ipynb.
+    - If prompt mentions other notebook keywords -> makes notebook available.
+    """
+    p = raw_text.strip()
+    
+    # Rule 1: Anatase TiO2 Water Molecular -> only provide file location; no file data, no notebook data
+    if is_anatase_water_molecular_prompt(p):
+        extxyz_prompt = format_anatase_extxyz_context_prompt()
+        root_path = Path(__file__).resolve().parent.parent.parent
+        data_file = root_path / "public" / "Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz"
+        if not data_file.exists():
+            data_file = root_path / "ChatBot" / "public" / "Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz"
+        
+        augmented = f"{extxyz_prompt}\n\n--- USER REQUEST ---\n{raw_text}"
+        return {
+            "augmented_prompt": augmented,
+            "matched_type": "extxyz",
+            "data_file_path": str(data_file) if data_file.exists() else None,
+            "notebook_context": None,
+            "attach_to_notebook": False
+        }
+
+    # Rule 2: Just Anatase TiO2 alone (for RDF, density, etc.) -> make running.ipynb notebook available
+    if is_anatase_tio2_prompt(p):
+        nb_p = notebook_path or str(Path(__file__).parent / "running.ipynb")
+        try:
+            nb_ctx = extract_notebook_context(nb_p)
+            nb_prompt = format_notebook_context_prompt(nb_ctx)
+            augmented = f"{nb_prompt}\n\n--- USER REQUEST ---\n{raw_text}"
+            return {
+                "augmented_prompt": augmented,
+                "matched_type": "notebook",
+                "data_file_path": None,
+                "notebook_context": nb_ctx,
+                "attach_to_notebook": True
+            }
+        except Exception:
+            pass
+
+    # Check 3: General notebook keywords
+    lower = p.lower()
+    if any(kw in lower for kw in ["running.ipynb", "notebook", "extxyz", "traj", "density profile", "survival probability", "simulation script"]):
+        nb_p = notebook_path or str(Path(__file__).parent / "running.ipynb")
+        try:
+            nb_ctx = extract_notebook_context(nb_p)
+            nb_prompt = format_notebook_context_prompt(nb_ctx)
+            augmented = f"{nb_prompt}\n\n--- USER REQUEST ---\n{raw_text}"
+            return {
+                "augmented_prompt": augmented,
+                "matched_type": "notebook",
+                "data_file_path": None,
+                "notebook_context": nb_ctx
+            }
+        except Exception:
+            pass
+
+    return {
+        "augmented_prompt": raw_text,
+        "matched_type": "none",
+        "data_file_path": None,
+        "notebook_context": None
+    }
+
 def clean_script_code(code: str) -> str:
     """Removes markdown code fences and cleans leading/trailing whitespace."""
     if not code:
