@@ -44,10 +44,32 @@ Answer:"""
             return f"Error connecting to LLM: {e}"
 
 if __name__ == "__main__": # pragma: no cover
+    import sys
     agent = QAAgent()
-    
-    # Test Question
-    test_q = "What pseudopotential should I use for Pt?"
-    print(f"Question: {test_q}")
-    ans = agent.answer(test_q)
-    print(f"\nAnswer: {ans}")
+    print("=" * 72)
+    print("📚 Hybrid RAG Scientific Q&A Agent CLI")
+    print(f"Model: {agent.model} | Endpoint: {agent.base_url}")
+    print("Capabilities: ChromaDB Vector Store + Kùzu Knowledge Graph")
+    print("Type your scientific question below. Type 'exit', 'quit', or 'q' to end.")
+    print("=" * 72)
+    print()
+
+    try:
+        while True:
+            try:
+                user_query = input("You > ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\n\nExiting session. Goodbye!")
+                break
+
+            if not user_query:
+                continue
+            if user_query.lower() in ["exit", "quit", "q"]:
+                print("Exiting session. Goodbye!")
+                break
+
+            print("\nAgent > ", end="", flush=True)
+            ans = agent.answer(user_query)
+            print(f"\n{ans}\n")
+    except KeyboardInterrupt:
+        print("\n\nSession terminated by user.")

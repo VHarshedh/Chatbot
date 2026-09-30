@@ -13,9 +13,11 @@ An intelligent, multi-agent AI assistant and workflow automation engine tailored
   - [3. Scientific LaTeX Mathematical Formula Rendering (KaTeX)](#3-scientific-latex-mathematical-formula-rendering-katex)
   - [4. Zero-Shot Interfacial Script Evaluation (100-Point Rubric)](#4-zero-shot-interfacial-script-evaluation-100-point-rubric)
   - [5. Hybrid RAG (ChromaDB + Kùzu Knowledge Graph)](#5-hybrid-rag-chromadb--kùzu-knowledge-graph)
-  - [6. Secure Sandboxed Execution](#6-secure-sandboxed-execution)
-  - [7. HPC & SLURM Orchestration](#7-hpc--slurm-orchestration)
-  - [8. Domain Modules](#8-domain-modules)
+  - [6. In-Session Multi-Turn & Cross-Session Episodic Memory](#6-in-session-multi-turn--cross-session-episodic-memory)
+  - [7. Interactive Colab & Jupyter Notebook Integration](#7-interactive-colab--jupyter-notebook-integration)
+  - [8. Secure Sandboxed Execution](#8-secure-sandboxed-execution)
+  - [9. HPC & SLURM Orchestration](#9-hpc--slurm-orchestration)
+  - [10. Domain Modules](#10-domain-modules)
 - [Repository Structure](#repository-structure)
 - [Prerequisites & System Requirements](#prerequisites--system-requirements)
 - [Step-by-Step Installation & Setup](#step-by-step-installation--setup)
@@ -23,7 +25,7 @@ An intelligent, multi-agent AI assistant and workflow automation engine tailored
   - [Phase 1: Environment & Services Setup](#phase-1-environment--services-setup)
   - [Phase 2: Database & RAG Initialization](#phase-2-database--rag-initialization)
   - [Phase 3: Launching the Backend API](#phase-3-launching-the-backend-api)
-  - [Phase 4: Running the AI Agents](#phase-4-running-the-ai-agents)
+  - [Phase 4: Running the AI Agents & Memory Sync](#phase-4-running-the-ai-agents--memory-sync)
   - [Phase 5: Running Domain Jupyter Notebooks](#phase-5-running-domain-jupyter-notebooks)
 - [Configuration Reference](#configuration-reference)
 - [Testing & Quality Assurance](#testing--quality-assurance)
@@ -87,9 +89,10 @@ This repository provides a unified software stack:
 ```
 
 ### 1. Multi-Agent System
-- **QA Agent (`backend/agents/qa_agent.py`)**: Answers scientific computing and simulation queries using grounded context from the hybrid retrieval system.
-- **Analysis Agent (`backend/agents/analysis_agent.py`)**: Generates scientific Python analysis scripts (using ASE, NumPy, Pandas, Matplotlib), executes them within a secure Docker sandbox, inspects standard error upon failure, queries web search (DuckDuckGo) for fixes if needed, and iteratively self-corrects up to 3 attempts.
-- **Single-Shot Evaluation Agent (`backend/agents/baseline_agent.py`)**: Direct evaluation baseline for `batiai/gemma4-e2b:q4` with zero external tools and zero RAG, equipped with real-time SSE token streaming.
+- **Agentic RAG Agent (`backend/agents/agentic_agent.py`)**: Autonomous scientific AI agent equipped with full tool-calling capabilities (Hybrid RAG, Docker sandbox execution with automatic self-correction, and live DuckDuckGo web search). Maintains multi-turn context and auto-indexes turns into cross-session memory.
+- **Single-Shot Evaluation Agent (`backend/agents/baseline_agent.py`)**: Direct evaluation baseline for `batiai/gemma4-e2b:q4` with multi-turn in-session continuity, sandbox execution, and real-time SSE token streaming.
+- **QA Agent (`backend/agents/qa_agent.py`)**: Focused scientific computing and simulation Q&A assistant using grounded context from the hybrid retrieval system.
+- **Analysis Agent (`backend/agents/analysis_agent.py`)**: Generates scientific Python analysis scripts (ASE, NumPy, Pandas, Matplotlib), executes them within the Docker sandbox, inspects errors, and self-corrects up to 3 attempts.
 
 ### 2. Live Token Streaming & Code Generation Studio
 - **Server-Sent Events (SSE) Streaming**: Tokens are streamed line-by-line via `POST /api/chat/stream` and `POST /api/evaluate_zero_shot/stream` with `Cache-Control: no-cache` and unbuffered transmission. Eliminates request timeouts and perceived delays.
@@ -143,9 +146,26 @@ This repository provides a unified software stack:
   - `Pseudopotential` (e.g. `Pt_ONCV_PBE-1.2.upf`, type, exchange-correlation)
   - `System` (e.g. `Water`, type mappings, simulation temperatures)
   - Relationships: `(:Material)-[:has_pseudo]->(:Pseudopotential)` and `(:Material)-[:part_of]->(:System)`.
-- **Hybrid Retriever (`backend/rag/hybrid_retriever.py`)**: Merges dense semantic vector similarity search with structured Cypher graph queries to produce accurate context.
+- **Hybrid Retriever (`backend/rag/hybrid_retriever.py`)**: Merges dense semantic vector similarity search, structured Cypher graph queries, and cross-session chat memory into an integrated prompt context.
 
-### 6. Secure Sandboxed Execution
+### 6. In-Session Multi-Turn & Cross-Session Episodic Memory
+- **In-Session Multi-Turn Continuity (`backend/db/models.py`)**:
+  - Automatically persists every conversational message in SQLite (`chatbox.db`).
+  - Fetches the active conversation history via `get_chat_history(session_id)` and structures it directly into Ollama's `messages` array (`role: "user"`, `role: "assistant"`).
+  - Provides zero-latency, high-accuracy multi-turn context retention across follow-up queries within the same chat session.
+- **Episodic Cross-Session RAG Memory (`backend/rag/chat_memory.py`)**:
+  - Embeds and indexes past conversational exchanges across all chat sessions into a dedicated ChromaDB collection (`chat_history_memory`) using `nomic-embed-text`.
+  - **Thinking Trace Cleansing**: Automatically strips internal model reasoning blocks (`<details class="thinking-details">...</details>`) prior to embedding to preserve semantic embedding quality and prevent context bloat.
+  - **Current-Session Isolation**: When querying memory, `search_memory` explicitly filters out the active session (`current_session_id`) to prevent echoing immediate context while recalling relevant insights from earlier sessions.
+  - **Auto-Sync & On-Demand Ingestion**: Automatically syncs SQLite sessions on FastAPI startup, provides `POST /api/memory/sync` API endpoint, and supports standalone CLI ingestion (`python -m backend.rag.chat_memory`).
+
+### 7. Interactive Colab & Jupyter Notebook Integration
+- **Target Notebook Auto-Attachment (`backend/notebooks/attach_to_notebook.py`)**:
+  - Automatically extracts generated Python simulation code and safely injects it into cell #2 of `ChatBot/backend/notebooks/running.ipynb`.
+  - Cleans prior cell outputs and preserves markdown descriptions so researchers can immediately execute the workflow in Google Colab (with free GPU acceleration) or locally via Jupyter.
+- **Notebook Context Grounding**: Resolves contextual variables from `running.ipynb` into prompt prefixes, giving the model direct visibility into interfacial analysis variables ($z$-cutoffs, atom type maps, model paths).
+
+### 8. Secure Sandboxed Execution
 - **Docker Sandbox (`backend/sandbox/`)**: Executes generated Python or Bash scripts inside an isolated container (`chatbox-sandbox:latest`):
   - `network_mode="none"` (disabled internet access during code execution).
   - `mem_limit="2g"` and `pids_limit=50` (prevents memory exhaustion and fork bombs).
@@ -153,10 +173,10 @@ This repository provides a unified software stack:
   - Read-only data mounting for trajectory files (`/mnt/data/...`).
   - Strict 120-second timeout.
 
-### 7. HPC & SLURM Orchestration
+### 9. HPC & SLURM Orchestration
 - **SLURM Tools (`backend/tools/slurm_tools.py`)**: Handles SSH communication with HPC clusters to execute `sbatch`, track job states via `squeue` and `sacct`, inspect `slurm-*.out` log files, and cancel jobs with `scancel`. Includes a local fallback mock for testing when `HPC_HOST="localhost"`.
 
-### 8. Domain Modules
+### 10. Domain Modules
 - **DFT Convergence (`DFT/` & `backend/tools/dft_tools.py`)**: Generates Quantum ESPRESSO (`pw.x`) input files (`pw.in`) from CIF structures, sets up cutoff/k-point sweep directories, and plots total energy convergence.
 - **DeePMD Training (`Training/` & `backend/tools/training_tools.py`)**: Converts `.raw` format files to `set.*` binary arrays, creates train/test splits, generates `input.json` model configurations, and prepares SLURM GPU training scripts across multiple random seeds.
 - **Molecular Dynamics (`Molecular Dynamics/` & `backend/tools/md_tools.py`)**: Sets up restart-linked batch MD runs in LAMMPS with DeePMD potentials and generates `submit_from.sh` to chain batch dependencies via SLURM `afterok`.
@@ -194,16 +214,25 @@ ChatBot/
 │
 ├── backend/                                     # AI Engine, APIs, RAG, and Tools
 │   ├── agents/                                 # Multi-Agent logic
+│   │   ├── agentic_agent.py                    # Autonomous agent with tools, hybrid RAG & self-correction
+│   │   ├── baseline_agent.py                   # Pure single-shot baseline & multi-turn evaluator
 │   │   ├── analysis_agent.py                   # Self-correcting scientific Python agent
 │   │   └── qa_agent.py                         # Hybrid RAG scientific Q&A assistant
 │   ├── db/                                     # Relational storage & state tracking
 │   │   ├── migrations.py                       # SQLite schema initialization (sessions, jobs, artifacts)
-│   │   └── models.py                           # SQLite helper queries
+│   │   └── models.py                           # SQLite helper queries & in-session chat history
+│   ├── evaluation/                             # Rubric benchmarking engine
+│   │   └── script_evaluator.py                 # 100-pt interfacial analysis scoring engine
+│   ├── notebooks/                              # Interactive research notebooks
+│   │   ├── attach_to_notebook.py               # Colab/Jupyter notebook code injector
+│   │   └── running.ipynb                       # Grounded interfacial analysis target notebook
 │   ├── rag/                                    # Retrieval Augmented Generation
+│   │   ├── chat_memory.py                      # Episodic cross-session ChromaDB memory store
 │   │   ├── embeddings.py                       # Ollama embedding wrapper
 │   │   ├── vectorstore.py                      # ChromaDB vector store & workspace ingestion
 │   │   ├── knowledge_graph.py                  # Kùzu graph DB schema and domain facts
-│   │   └── hybrid_retriever.py                 # Fused vector + graph retrieval
+│   │   ├── notebook_parser.py                  # Jupyter notebook chunker and ingestor
+│   │   └── hybrid_retriever.py                 # Fused vector + graph + chat memory retrieval
 │   ├── sandbox/                                # Secure execution environment
 │   │   ├── Dockerfile                          # Debian + QE + LAMMPS + Python container
 │   │   └── executor.py                         # Docker execution manager with resource limits
@@ -218,16 +247,19 @@ ChatBot/
 │   ├── tests/                                  # Test suite (>= 95% coverage requirement)
 │   │   ├── integration/                        # Live tests requiring Docker/Ollama
 │   │   │   └── test_live.py
-│   │   ├── test_agents.py                      # Agent unit tests
+│   │   ├── test_chat_memory.py                 # Cross-session memory unit tests
+│   │   ├── test_agentic_agent.py               # Autonomous agent tests
+│   │   ├── test_baseline_agent.py              # Baseline agent and multi-turn tests
+│   │   ├── test_attach_to_notebook.py          # Colab notebook injector tests
+│   │   ├── test_rag.py                         # VectorStore, KG, and memory retrieval tests
+│   │   ├── test_database.py                    # SQLite migrations and models tests
+│   │   ├── test_sandbox_executor.py            # Sandbox executor tests
+│   │   ├── test_sandbox_tools.py               # Sandbox tool wrapper tests
+│   │   ├── test_analysis_tools.py              # Analysis tool unit tests
 │   │   ├── test_dft_tools.py                   # DFT tool unit tests
 │   │   ├── test_md_tools.py                    # MD tool unit tests
 │   │   ├── test_training_tools.py              # Training tool unit tests
-│   │   ├── test_analysis_tools.py              # Analysis tool unit tests
-│   │   ├── test_rag.py                         # VectorStore & KnowledgeGraph tests
-│   │   ├── test_sandbox_executor.py            # Sandbox executor tests
-│   │   ├── test_sandbox_tools.py               # Sandbox tool wrapper tests
 │   │   ├── test_slurm_tools.py                 # SLURM tool tests
-│   │   ├── test_database.py                    # SQLite migrations and models tests
 │   │   └── test_web_tools.py                   # Web search tool tests
 │   ├── config.py                               # Central Pydantic settings
 │   ├── main.py                                 # FastAPI application entry point
@@ -418,19 +450,31 @@ Stored evaluation #1 in SQLite database.
 ```
 
 #### 2. Single-Shot Baseline Agent CLI
-Evaluates `batiai/gemma4-e2b:q4` directly from the command line:
+Evaluates `batiai/gemma4-e2b:q4` directly with in-session multi-turn history from the command line:
 ```bash
 python -m backend.agents.baseline_agent
 ```
 
-#### 3. Run the Hybrid RAG Scientific Q&A Agent
+#### 3. Run the Autonomous Agentic RAG Agent
+Runs the multi-turn agent with full tool calling (Hybrid RAG, Docker sandbox execution, web search):
+```bash
+python -m backend.agents.agentic_agent
+```
+
+#### 4. Sync Cross-Session Episodic Memory
+Batch indexes all past sessions and conversational exchanges from SQLite into ChromaDB:
+```bash
+python -m backend.rag.chat_memory
+```
+
+#### 5. Run the Hybrid RAG Scientific Q&A Agent
 Queries the Hybrid Retriever (ChromaDB + Kùzu Knowledge Graph) and synthesizes domain answers:
 ```bash
 python -m backend.agents.qa_agent
 ```
 *Example question answered:* `"What pseudopotential should I use for Pt?"`
 
-#### 4. Run the Self-Correcting Analysis Agent
+#### 6. Run the Self-Correcting Analysis Agent
 Generates scientific Python analysis code and executes it in the sandbox:
 ```bash
 python -m backend.agents.analysis_agent
@@ -510,34 +554,87 @@ All settings can be customized via environment variables or in [backend/config.p
 
 ## Testing & Quality Assurance
 
-The codebase includes a comprehensive test suite with strict coverage thresholds configured in `pytest.ini`:
+The codebase includes an extensive automated test suite covering SQLite database models, in-session history tracking, cross-session ChromaDB chat memory, hybrid RAG retrieval, Docker sandbox execution, and both baseline and agentic AI agents.
 
-```bash
-# Run all unit tests with coverage reporting (123/123 tests passing, >=95% coverage)
-pytest backend/tests --ignore=backend/tests/integration/test_live.py
+### 1. Activating the Virtual Environment
+Ensure your terminal is running inside the project's virtual environment where all testing dependencies (`pytest`, `pytest-cov`, `chromadb`, `pydantic-settings`) are installed:
 
-# Run evaluation rubric and metric comparison tests specifically
-pytest backend/tests/test_script_evaluator.py -v
+- **Windows PowerShell**:
+  ```powershell
+  # If starting from workspace root:
+  .\venv\Scripts\Activate.ps1
+  # If starting from ChatBot/ or backend/:
+  ..\venv\Scripts\Activate.ps1
+  ```
+- **Windows CMD**:
+  ```cmd
+  ..\venv\Scripts\activate.bat
+  ```
+- **Linux / macOS**:
+  ```bash
+  source ../venv/bin/activate
+  ```
 
-# Run live integration tests (requires Docker and Ollama to be running)
-pytest -m "" backend/tests/integration/test_live.py
-```
+### 2. Running Pytest
 
-*Note:* `pytest.ini` enforces `--cov=backend --cov-report=term-missing --cov-fail-under=95`. Current test suite includes **123 passing tests**, covering all agent, evaluation, database, tools, and API modules. Context window is tuned to **8192 (`NUM_CTX=8192`)** for fast, high-throughput GPU inference on mobile AMD Radeon graphics.
+Depending on your current working directory:
+
+- **Running from the root `ChatBot/` directory**:
+  ```bash
+  # Run all backend unit tests:
+  pytest backend/tests/ -v
+
+  # Run specific test modules:
+  pytest backend/tests/test_chat_memory.py -v
+  pytest backend/tests/test_rag.py -v
+  pytest backend/tests/test_agentic_agent.py -v
+  pytest backend/tests/test_baseline_agent.py -v
+  ```
+
+- **Running from within `ChatBot/backend/`**:
+  ```bash
+  # Run tests directly from backend/:
+  pytest tests/ -v
+  ```
+
+- **Running Without Coverage Overhead (`-o addopts=""`)**:
+  `backend/pytest.ini` configures `--cov=backend --cov-report=term-missing --cov-fail-under=95` by default. If running in an environment without `pytest-cov`, or when you want fast test iterations without coverage calculation, override the default options:
+  ```bash
+  # From ChatBot/ root:
+  pytest -o addopts="" backend/tests/ -v
+
+  # From ChatBot/backend/:
+  pytest -o addopts="" tests/ -v
+  ```
 
 ---
 
 ## Troubleshooting & Common Issues
 
-1. **`Error connecting to LLM`**:
+1. **`pytest: error: unrecognized arguments: --cov=backend`**:
+   - **Cause**: Pytest is being run in the global base Python environment instead of the project virtual environment, so the `pytest-cov` plugin is not found.
+   - **Fix**: Either activate the virtual environment (`..\venv\Scripts\Activate.ps1`), or run pytest bypassing the default coverage flags:
+     ```bash
+     pytest -o addopts="" tests/ -v
+     ```
+
+2. **`ERROR: file or directory not found: tests/`**:
+   - **Cause**: You ran `pytest tests/` while in the root `ChatBot/` directory. The test folder is located at `backend/tests/`.
+   - **Fix**: Run `pytest backend/tests/ -v` (or `cd backend` first, then run `pytest tests/ -v`).
+
+3. **`Error connecting to LLM`**:
    - Verify that Ollama is running: execute `ollama list` in your terminal.
    - Verify that the models are pulled: `ollama pull batiai/gemma4-e2b:q4` and `ollama pull nomic-embed-text`.
-2. **`Docker is not running on the host`**:
+
+4. **`Docker is not running on the host`**:
    - Start Docker Desktop.
    - If running in an environment where Docker is unavailable, the `SandboxExecutor` gracefully returns a descriptive error message without crashing.
-3. **`Kuzu Database Lock Error`**:
+
+5. **`Kuzu Database Lock Error`**:
    - Kùzu allows only one read-write process per database directory. Avoid running multiple ingestion or initialization scripts at the exact same time against the same `kuzu_db` folder.
-4. **HPC SSH Connection Errors**:
+
+6. **HPC SSH Connection Errors**:
    - When `HPC_HOST` is set to `"localhost"`, `slurm_tools.py` runs commands locally or returns mock job IDs (`99999`). When targeting a real HPC cluster, ensure your SSH key is added to `ssh-agent` and verify you can connect manually via `ssh -i <key> <user>@<host>`.
-5. **Large Trajectory File Notice**:
+
+7. **Large Trajectory File Notice**:
    - `Analysis/iro2_water_concat.extxyz` is ~4.2 GB. When loading the trajectory in the analysis notebook or agent tools, use the `stride` parameter (e.g., `stride=10`) to avoid high memory consumption.

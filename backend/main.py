@@ -583,9 +583,25 @@ def delete_session(session_id: int):
     execute_query("DELETE FROM sessions WHERE id = ?", (session_id,))
     return {"status": "deleted", "session_id": session_id}
 
+@app.post("/api/memory/sync")
+def sync_chat_memory():
+    """Batch indexes all past sessions and turns from SQLite into ChromaDB memory store"""
+    try:
+        from backend.rag.chat_memory import get_chat_memory_store
+        count = get_chat_memory_store().ingest_all_sessions()
+        return {"status": "success", "turns_ingested": count, "message": f"Successfully synced {count} conversational turns into cross-session memory."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Memory sync failed: {e}")
+
 @app.on_event("startup")
 async def startup_event():
     init_db()
+    try:
+        from backend.rag.chat_memory import get_chat_memory_store
+        get_chat_memory_store().ingest_all_sessions()
+    except Exception as e:
+        print(f"Notice: Background memory sync on startup skipped: {e}")
+
     settings.NUM_GPU = int(os.getenv("NUM_GPU", str(settings.NUM_GPU)))
     gpu_mode = "CPU-only (NUM_GPU=0)" if settings.NUM_GPU == 0 else (
         "GPU — all layers (AMD Radeon via ROCm/HIP)" if settings.NUM_GPU == -1

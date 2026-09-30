@@ -1,12 +1,15 @@
+from typing import Optional
 from backend.rag.vectorstore import VectorStore
 from backend.rag.knowledge_graph import KnowledgeGraph
+from backend.rag.chat_memory import get_chat_memory_store
 
 class HybridRetriever:
     def __init__(self):
         self.vector_store = VectorStore()
         self.kg = KnowledgeGraph()
+        self.chat_memory = get_chat_memory_store()
         
-    def retrieve(self, query: str) -> str:
+    def retrieve(self, query: str, current_session_id: Optional[int] = None) -> str:
         # 1. Semantic search across notebook cells and repository documents
         vs_results = self.vector_store.semantic_search(query, n_results=6)
         
@@ -48,7 +51,21 @@ class HybridRetriever:
                 "- Grounded target notebook: `ChatBot/backend/notebooks/running.ipynb`.\n"
             )
                 
-        # 3. Fuse results (suppress notebook cells if molecular extxyz requested)
+        # 3. Cross-Session Chat Memory RAG Retrieval
+        chat_memory_context = ""
+        try:
+            memories = self.chat_memory.search_memory(
+                query=query,
+                n_results=2,
+                current_session_id=current_session_id,
+                max_distance=1.05
+            )
+            if memories:
+                chat_memory_context = self.chat_memory.format_memory_context(memories)
+        except Exception as e:
+            print(f"Notice: Cross-session memory retrieval skipped: {e}")
+
+        # 4. Fuse results (suppress notebook cells if molecular extxyz requested)
         context = ""
         if not is_mol:
             context += "--- Vector Store Context ---\n"
@@ -57,6 +74,9 @@ class HybridRetriever:
             
         context += "--- Knowledge Graph & Domain Context ---\n"
         context += kg_context
+
+        if chat_memory_context:
+            context += f"\n{chat_memory_context}\n"
         
         return context
 

@@ -270,8 +270,20 @@ class SingleShotAgent:
                 agent_used="SingleShotAgent"
             )
 
+            try:
+                from backend.rag.chat_memory import get_chat_memory_store
+                get_chat_memory_store().index_turn(
+                    session_id=session_id,
+                    user_message=user_message,
+                    assistant_message=result["response"],
+                    agent_used="SingleShotAgent"
+                )
+            except Exception:
+                pass
+
         result["session_id"] = session_id
         return result
+
 
     def chat_stream(
         self,
@@ -468,6 +480,17 @@ class SingleShotAgent:
                 agent_used="SingleShotAgent"
             )
 
+            try:
+                from backend.rag.chat_memory import get_chat_memory_store
+                get_chat_memory_store().index_turn(
+                    session_id=session_id,
+                    user_message=user_message,
+                    assistant_message=final_text,
+                    agent_used="SingleShotAgent"
+                )
+            except Exception:
+                pass
+
             yield f"data: {json.dumps({'type': 'done', 'latency_seconds': latency, 'eval_count': eval_count, 'session_id': session_id, 'full_response': final_text})}\n\n"
 
         except requests.exceptions.ConnectionError:
@@ -477,8 +500,45 @@ class SingleShotAgent:
             yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
 
 if __name__ == "__main__":
+    import sys
     agent = SingleShotAgent()
-    print(f"Testing SingleShotAgent with model {agent.model}...")
-    res = agent.generate_response("What is the difference between plane-wave cutoff and density cutoff in Quantum ESPRESSO?")
-    print(f"Status: {res['status']} | Latency: {res.get('latency_seconds')}s")
-    print(res.get("response", res.get("error")))
+    print("=" * 72)
+    print("🔬 SingleShot Scientific Baseline Agent CLI")
+    print(f"Model: {agent.model} | Endpoint: {agent.base_url}")
+    print("Capabilities: Multi-Turn Context, Docker Sandbox Execution, Code Generation")
+    print("Type your message below. Type 'exit', 'quit', or 'q' to end.")
+    print("=" * 72)
+
+    cli_session_id = insert_session(title="CLI Baseline Session")
+    print(f"[Session #{cli_session_id} active with full multi-turn memory]\n")
+
+    try:
+        while True:
+            try:
+                user_query = input("You > ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\n\nExiting session. Goodbye!")
+                break
+
+            if not user_query:
+                continue
+            if user_query.lower() in ["exit", "quit", "q"]:
+                print("Exiting session. Goodbye!")
+                break
+
+            print("\nAgent > ", end="", flush=True)
+            for sse in agent.chat_stream(user_query, session_id=cli_session_id):
+                if "data: " in sse:
+                    try:
+                        data = json.loads(sse.replace("data: ", "").strip())
+                        if data.get("type") == "content":
+                            sys.stdout.write(data.get("delta", ""))
+                            sys.stdout.flush()
+                        elif data.get("type") == "done":
+                            print(f"\n\n[Done — ⏱️ {data.get('latency_seconds', 0.0)}s]\n")
+                        elif data.get("type") == "error":
+                            print(f"\n❌ Error: {data.get('error')}\n")
+                    except Exception:
+                        pass
+    except KeyboardInterrupt:
+        print("\n\nSession terminated by user.")

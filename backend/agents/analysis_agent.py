@@ -100,5 +100,47 @@ Web Search Context:
         }
 
 if __name__ == "__main__": # pragma: no cover
+    import sys
     agent = AnalysisAgent()
-    print(agent.run_analysis("Compute the density profile of water."))
+    print("=" * 72)
+    print("🧪 Self-Correcting Scientific Analysis Agent CLI")
+    print(f"Model: {agent.model} | Endpoint: {agent.base_url}")
+    print("Capabilities: RAG Context, Docker Sandbox Execution, Automated Self-Correction")
+    print("Type your analysis request below. Type 'exit', 'quit', or 'q' to end.")
+    print("=" * 72)
+    print()
+
+    try:
+        while True:
+            try:
+                user_query = input("You > ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\n\nExiting session. Goodbye!")
+                break
+
+            if not user_query:
+                continue
+            if user_query.lower() in ["exit", "quit", "q"]:
+                print("Exiting session. Goodbye!")
+                break
+
+            print(f"\nProcessing request: '{user_query}'...")
+            res = agent.run_analysis(user_query)
+
+            if res.get("status") == "success":
+                print("\n✅ Execution Succeeded!")
+                print("\n--- Code Generated & Verified ---")
+                print(res.get("code_used", "").strip())
+                if res.get("stdout"):
+                    print("\n--- Container Stdout ---")
+                    print(res.get("stdout").strip())
+                if res.get("artifacts"):
+                    print(f"\n--- Generated Artifacts: {', '.join(res.get('artifacts'))} ---")
+            else:
+                print("\n❌ Execution Failed after retries:")
+                print(res.get("stderr", "Unknown error").strip())
+                print("\n--- Last Attempt Code ---")
+                print(res.get("code_used", "").strip())
+            print()
+    except KeyboardInterrupt:
+        print("\n\nSession terminated by user.")

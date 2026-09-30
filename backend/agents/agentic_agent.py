@@ -141,7 +141,7 @@ class AgenticRAGAgent:
                 anaphoric_words = ["it", "its", "this", "these", "that", "those", "same", "previous", "earlier", "above"]
                 if any(w in user_message.lower().split() for w in anaphoric_words) and last_user_msg:
                     retrieval_query = f"{last_user_msg}\n{user_message}"
-            context = str(self.retriever.retrieve(retrieval_query))
+            context = str(self.retriever.retrieve(retrieval_query, current_session_id=session_id))
             rag_snippet = context[:400] + ("..." if len(context) > 400 else "")
             rag_step = {"type": "agent_step", "step": "rag_complete", "title": "Hybrid RAG Retrieval", "status": "completed", "details": rag_snippet}
             trace_steps.append(rag_step)
@@ -476,6 +476,17 @@ Get straight to the point and do not beat around the bush. Eliminate pleasantrie
                 tool_calls_json=json.dumps(trace_steps)
             )
 
+            try:
+                from backend.rag.chat_memory import get_chat_memory_store
+                get_chat_memory_store().index_turn(
+                    session_id=session_id,
+                    user_message=user_message,
+                    assistant_message=final_text,
+                    agent_used="AgenticRAG"
+                )
+            except Exception:
+                pass
+
             yield f"data: {json.dumps({'type': 'done', 'latency_seconds': latency, 'eval_count': eval_count, 'session_id': session_id, 'mode': 'agentic', 'full_response': final_text, 'tool_calls': trace_steps})}\n\n"
 
         except Exception as e:
@@ -530,3 +541,50 @@ Get straight to the point and do not beat around the bush. Eliminate pleasantrie
             "mode": "agentic",
             "tool_calls": tool_calls
         }
+
+if __name__ == "__main__":
+    import sys
+    agent = AgenticRAGAgent()
+    print("=" * 72)
+    print("🤖 Autonomous Scientific AI Agent CLI (Agentic RAG)")
+    print(f"Model: {agent.model} | Endpoint: {agent.base_url}")
+    print("Capabilities: Hybrid RAG, Docker Sandbox, Web Search, Cross-Session Memory")
+    print("Type your message below. Type 'exit', 'quit', or 'q' to end.")
+    print("=" * 72)
+
+    cli_session_id = insert_session(title="CLI Agentic Session")
+    print(f"[Session #{cli_session_id} active with full multi-turn memory]\n")
+
+    try:
+        while True:
+            try:
+                user_query = input("You > ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\n\nExiting session. Goodbye!")
+                break
+
+            if not user_query:
+                continue
+            if user_query.lower() in ["exit", "quit", "q"]:
+                print("Exiting session. Goodbye!")
+                break
+
+            print("\nAgent > ", end="", flush=True)
+            for sse in agent.chat_stream(user_query, session_id=cli_session_id):
+                if "data: " in sse:
+                    try:
+                        data = json.loads(sse.replace("data: ", "").strip())
+                        if data.get("type") == "agent_step":
+                            print(f"\n⚡ [{data.get('title')}]: {data.get('details', '')[:90]}...", flush=True)
+                            print("Agent > ", end="", flush=True)
+                        elif data.get("type") == "content":
+                            sys.stdout.write(data.get("delta", ""))
+                            sys.stdout.flush()
+                        elif data.get("type") == "done":
+                            print(f"\n\n[Done — ⏱️ {data.get('latency_seconds', 0.0)}s | {len(data.get('tool_calls', []))} tool steps]\n")
+                        elif data.get("type") == "error":
+                            print(f"\n❌ Error: {data.get('error')}\n")
+                    except Exception:
+                        pass
+    except KeyboardInterrupt:
+        print("\n\nSession terminated by user.")
