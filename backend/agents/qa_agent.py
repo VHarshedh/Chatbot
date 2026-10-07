@@ -2,6 +2,20 @@ import requests
 from backend.config import settings
 from backend.rag.hybrid_retriever import HybridRetriever
 
+QA_SYSTEM_PROMPT = (
+    "SYSTEM DIRECTIVE: You are SciCompute AI, an authoritative scientific computing and computational materials assistant "
+    "specialized in Density Functional Theory (DFT), Molecular Dynamics (LAMMPS), Machine Learning Potentials (DeepMD-kit), and ASE.\n"
+    "\n"
+    "CORE PROTOCOLS:\n"
+    "1. Grounding & Provenance: Ground your answer strictly on the provided Hybrid RAG context (ChromaDB vector documents and Kùzu knowledge graph relationships). "
+    "Prioritize retrieved parameters, formulas, cutoffs, and data structures.\n"
+    "2. Context Boundaries: If the context contains the answer, synthesize it directly with high technical precision. "
+    "If the question exceeds the context, leverage your computational materials science knowledge but state this boundary concisely.\n"
+    "3. Mathematical Precision: Formulate all physical equations and parameters using standard LaTeX ($...$ for inline, $$...$$ for block display).\n"
+    "4. Concise Execution: Get straight to the point and do not beat around the bush. Provide zero introductory pleasantries, filler phrases, or conversational preambles. "
+    "Deliver the direct answer followed by rigorous technical elaboration."
+)
+
 class QAAgent:
     def __init__(self):
         self.retriever = HybridRetriever()
@@ -13,35 +27,60 @@ class QAAgent:
         print("Retrieving context...")
         context = self.retriever.retrieve(question)
         
-        # 2. Build prompt
-        prompt = f"""You are a scientific computing assistant. Get straight to the point and do not beat around the bush.
-Provide direct, concise, and accurate answers with no conversational filler or preamble.
-Use the following context to answer the question.
-If the answer is not in the context, you can use your own knowledge but clarify that directly.
-
-Context:
+        # 2. Build user prompt
+        user_prompt = f"""Retrieved Domain Context:
 {context}
 
 Question:
 {question}
 
-Answer:"""
+Provide an authoritative, direct scientific answer:"""
 
-        # 3. Call LLM
+        # 3. Call LLM with native system role and options
         print(f"Calling Ollama ({self.model})...")
+        messages = [
+            {"role": "system", "content": QA_SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt}
+        ]
         try:
             response = requests.post(
-                f"{self.base_url}/api/generate",
+                f"{self.base_url}/api/chat",
                 json={
                     "model": self.model,
-                    "prompt": prompt,
-                    "stream": False
-                }
+                    "messages": messages,
+                    "stream": False,
+                    "options": {
+                        "num_ctx": settings.NUM_CTX,
+                        "temperature": 0.2,
+                        "num_gpu": settings.NUM_GPU,
+                    }
+                },
+                timeout=120
             )
             response.raise_for_status()
-            return response.json()["response"]
+            data = response.json()
+            if "message" in data:
+                return data["message"].get("content", "")
+            return data.get("response", "")
         except Exception as e:
-            return f"Error connecting to LLM: {e}"
+            # Fallback to /api/generate for backward compatibility or unit test mocks
+            try:
+                gen_payload = {
+                    "model": self.model,
+                    "system": QA_SYSTEM_PROMPT,
+                    "prompt": f"{QA_SYSTEM_PROMPT}\n\n{user_prompt}",
+                    "stream": False
+                }
+                fallback_res = requests.post(
+                    f"{self.base_url}/api/generate",
+                    json=gen_payload,
+                    timeout=120
+                )
+                fallback_res.raise_for_status()
+                fdata = fallback_res.json()
+                return fdata.get("response") or fdata.get("message", {}).get("content", "")
+            except Exception:
+                return f"Error connecting to LLM: {e}"
 
 if __name__ == "__main__": # pragma: no cover
     import sys

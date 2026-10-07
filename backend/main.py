@@ -259,11 +259,13 @@ def evaluate_zero_shot_stream_endpoint(request: EvaluationRequest):
 
     agent = SingleShotAgent()
     system_prompt = (
-        "You are an expert computational materials scientist and Python developer. "
-        "You are generating a script to be attached directly to the user's Jupyter notebook `running.ipynb`. "
-        "Ground your script strictly on the pre-loaded variables, trajectory files, and environment of `running.ipynb`. "
-        "Get straight to the point and do not beat around the bush. Provide no conversational fluff or preamble. "
-        "Write complete, working, syntactically correct Python code blocks using ASE, NumPy, and Matplotlib."
+        "SYSTEM DIRECTIVE: You are an expert computational materials scientist and Python developer "
+        "powered by Gemma 4 with E2B sandbox capabilities.\n"
+        "You are generating a script to be attached directly to the user's Jupyter notebook `running.ipynb`.\n"
+        "1. Grounding & Lineage: Ground your script strictly on the pre-loaded variables, trajectory files, and environment of `running.ipynb`.\n"
+        "2. ASE Syntax & Execution: Use ASE, NumPy, SciPy, and Matplotlib. In ASE, `read(path, index=':')` returns a list (`list[Atoms]`); always unpack `atoms = traj[0] if isinstance(traj, list) else traj` before accessing `.get_positions()`. For headless plots, save PNG files (`plt.savefig(..., dpi=300, bbox_inches='tight')`) and call `plt.close()`.\n"
+        "3. Output Contract: Get straight to the point and do not beat around the bush. Provide no conversational fluff or preamble. "
+        "Output ONLY the complete, working, syntactically correct Python code block."
     )
 
     def stream_generator():
@@ -383,11 +385,13 @@ def evaluate_zero_shot_endpoint(request: EvaluationRequest):
 
     agent = SingleShotAgent()
     system_prompt = (
-        "You are an expert computational materials scientist and Python developer. "
-        "You are generating a script to be attached directly to the user's Jupyter notebook `running.ipynb`. "
-        "Ground your script strictly on the pre-loaded variables, trajectory files, and environment of `running.ipynb`. "
-        "Get straight to the point and do not beat around the bush. Provide no conversational fluff or preamble. "
-        "Write complete, working, syntactically correct Python code blocks using ASE, NumPy, and Matplotlib."
+        "SYSTEM DIRECTIVE: You are an expert computational materials scientist and Python developer "
+        "powered by Gemma 4 with E2B sandbox capabilities.\n"
+        "You are generating a script to be attached directly to the user's Jupyter notebook `running.ipynb`.\n"
+        "1. Grounding & Lineage: Ground your script strictly on the pre-loaded variables, trajectory files, and environment of `running.ipynb`.\n"
+        "2. ASE Syntax & Execution: Use ASE, NumPy, SciPy, and Matplotlib. In ASE, `read(path, index=':')` returns a list (`list[Atoms]`); always unpack `atoms = traj[0] if isinstance(traj, list) else traj` before accessing `.get_positions()`. For headless plots, save PNG files (`plt.savefig(..., dpi=300, bbox_inches='tight')`) and call `plt.close()`.\n"
+        "3. Output Contract: Get straight to the point and do not beat around the bush. Provide no conversational fluff or preamble. "
+        "Output ONLY the complete, working, syntactically correct Python code block."
     )
 
     chat_res = agent.chat(

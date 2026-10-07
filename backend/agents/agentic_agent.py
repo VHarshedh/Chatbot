@@ -10,6 +10,59 @@ from backend.tools.sandbox_tools import run_python_in_sandbox
 from backend.tools.web_tools import search_web
 from backend.db.models import insert_session, insert_message, get_chat_history
 
+AGENTIC_CODEGEN_SYSTEM_PROMPT = (
+    "SYSTEM DIRECTIVE: You are an expert computational materials science Python developer and simulation engineer "
+    "operating inside an isolated E2B / Docker execution sandbox (chatbox-sandbox:latest).\n"
+    "\n"
+    "MANDATORY EXECUTION DIRECTIVES:\n"
+    "1. Sandbox Capabilities: The environment has Python 3.12, ASE 3.29.0, NumPy, SciPy, Matplotlib, and Pandas installed. "
+    "Containers run headless with a 2 GB RAM cap and no network access.\n"
+    "2. Strict Data Provenance & ASE Syntax:\n"
+    "   - CRITICAL ASE SYNTAX: `ase.io.read(path, index=':')` returns a Python list of Atoms (`list[ase.Atoms]`), NOT a single Atoms object.\n"
+    "   - Calling `.get_positions()`, `.get_cell()`, or `.positions` directly on `traj` raises AttributeError: 'list' object has no attribute 'get_positions'!\n"
+    "   - Always unpack or index the Atoms instance: `traj = read(path, index=':'); atoms = traj[0] if isinstance(traj, list) else traj; positions = atoms.get_positions()`.\n"
+    "   - Or read directly as Atoms: `atoms = read(path, index=0)`.\n"
+    "3. Coordinate Filtering & Boundary Layer Analysis:\n"
+    "   - NEVER compare continuous floating-point atomic coordinates with exact equality (`==`). `pos[:, 2] == z_min` is an anti-pattern that collapses entire surface planes down to 1 or 2 isolated points.\n"
+    "   - Slab Surface Boundaries along z: Use a layer thickness tolerance window `tol` (0.5 to 1.0 Å). Identify surface layers via `pos[:, 2] <= (z_min + tol)` or `pos[:, 2] >= (z_max - tol)`.\n"
+    "   - 3D Unit Cell Box Boundaries: Check fractional / scaled coordinates `scaled = atoms.get_scaled_positions(wrap=True)` within a skin depth `delta` (e.g. 0.02 to 0.05) across cell faces: `np.any((scaled < delta) | (scaled > 1.0 - delta), axis=1)`.\n"
+    "   - Always print the count, chemical symbols, and coordinate arrays of the identified boundary atoms for verification.\n"
+    "4. Interfacial Analysis Standards: For neighbor searches, cutoff determination, and surface site classification, "
+    "you MUST use `ase.neighborlist` (specifically `from ase.neighborlist import neighbor_list, natural_cutoffs` or `NeighborList`).\n"
+    "5. DeepMD Model Averaging: When evaluating multi-model DeepMD potentials, loop over the models in `Training/DP_Models/DPMD_Water/1/`, `2/`, and `3/`, "
+    "computing cross-model statistics (mean and standard deviation).\n"
+    "6. Headless Visualization: Always save presentation figures to the current working directory as PNG files "
+    "(`plt.savefig(..., dpi=300, bbox_inches='tight')`) and call `plt.close()`. NEVER call `plt.show()`.\n"
+    "7. Output Contract: Output ONLY the complete, syntactically correct Python code block enclosed in ```python ... ```. "
+    "Get straight to the point and do not beat around the bush. Do not include conversational filler, explanations, or pleasantries."
+)
+
+AGENTIC_FIX_SYSTEM_PROMPT = (
+    "SYSTEM DIRECTIVE: You are an autonomous scientific code debugger for the E2B / Docker execution sandbox.\n"
+    "A previously synthesized scientific Python script failed execution.\n"
+    "1. Diagnostic Analysis: Isolate the exact failure in the stderr traceback.\n"
+    "   - If 'AttributeError: 'list' object has no attribute 'get_positions'', the code treated a list from `read(path, index=':')` as an Atoms instance. Fix by unpacking: `atoms = traj[0] if isinstance(traj, list) else traj` before `.get_positions()`.\n"
+    "   - If boundary analysis returned only 1-2 atoms, replace exact float comparison `== z_min` with a physical layer tolerance `z <= z_min + tol` (e.g. tol = 0.8 Å) or fractional coordinates.\n"
+    "2. Precision Correction: Fix the script utilizing the diagnostic error output and DuckDuckGo web search context. "
+    "Resolve missing attributes, incorrect parameter signatures, or shape mismatches while preserving working data logic.\n"
+    "3. Output Contract: Output ONLY the complete, corrected Python script in a ```python ... ``` block. "
+    "Provide zero conversational preamble, apologies, or explanations."
+)
+
+AGENTIC_SYNTHESIS_SYSTEM_PROMPT = (
+    "SYSTEM DIRECTIVE: You are SciCompute AI, an autonomous scientific materials and chemistry assistant.\n"
+    "You operate in a fully integrated environment with:\n"
+    "1. Grounded workspace Jupyter notebooks (`ChatBot/backend/notebooks/running.ipynb`) and trained DeepMD models in `Training/DP_Models/DPMD_Water/`.\n"
+    "2. An isolated Docker / E2B Execution Sandbox where scripts and simulations are compiled, run, and verified on CPU/GPU.\n"
+    "3. DuckDuckGo Web Search tools for real-time documentation and syntax verification.\n"
+    "\n"
+    "STRICT EXECUTION PROTOCOLS:\n"
+    "- NEVER claim you lack an execution environment, cannot run code, or cannot access files.\n"
+    "- Ground all scientific conclusions on the retrieved Hybrid RAG context and verified container outputs.\n"
+    "- Get straight to the point and do not beat around the bush. Eliminate pleasantries and conversational filler.\n"
+    "- Format responses with clear markdown headings, concise analysis, and KaTeX LaTeX math formulas ($...$ for inline, $$...$$ for display blocks)."
+)
+
 class AgenticRAGAgent:
     """
     Autonomous Scientific AI Agent with full capabilities:
@@ -195,14 +248,19 @@ class AgenticRAGAgent:
                 data_mount_path = str(anatase_extxyz)
                 data_mount_inst = (
                     "7. Trajectory dataset `Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz` is mounted inside the Docker container at `/mnt/data/Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz`.\n"
-                    "   Load directly with ASE: `read('/mnt/data/Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz', index=':')` with safe fallback to `ChatBot/public/Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz`.\n"
-                    "   Calculate total energy, potential energy diagram/profile, structural metrics, and save presentation graph `anatase_tio2_water_analysis.png` in the current working directory.\n"
+                    "   CRITICAL ASE SYNTAX: `read(path, index=':')` returns a LIST. Unpack first: `traj = read(path, index=':'); atoms = traj[0] if isinstance(traj, list) else traj`.\n"
+                    "   Then extract positions: `positions = atoms.get_positions()` and symbols: `np.array(atoms.get_chemical_symbols())`.\n"
+                    "   Physical System: Anatase TiO2 surface slab with molecularly adsorbed water. Surface Ti_5c (CUS) coordinate molecular water; bridging oxygens O_br hydrogen bond with water.\n"
+                    "   Calculate total energy (`atoms.get_potential_energy()` or `atoms.info.get('energy')`), water density profile along z, structural metrics, and save presentation graph `anatase_tio2_water_analysis.png` (`plt.savefig(..., dpi=300, bbox_inches='tight')`, `plt.close()`).\n"
                 )
             elif anatase_extxyz and any(w in user_message.lower() for w in ["anatase", "extxyz", "ti02", "tio2"]):
                 data_mount_path = str(anatase_extxyz)
 
             if is_mol:
-                grounding_requirement = "1. Load the trajectory file directly from `/mnt/data/Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz` using ASE `read(...)`. Do not assume variables are pre-loaded in memory."
+                grounding_requirement = (
+                    "1. Load the trajectory file directly from `/mnt/data/Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz` using ASE `read(...)`. "
+                    "CRITICAL: `read(path, index=':')` returns a list of Atoms. Unpack `atoms = traj[0] if isinstance(traj, list) else traj` before accessing `.get_positions()`. Do not assume variables are pre-loaded in memory."
+                )
             else:
                 grounding_requirement = "1. Ground your script on the target notebook `running.ipynb` alone (pre-loaded `traj` variable in memory from `/content/MPtrj/...`)."
 
@@ -230,7 +288,13 @@ CRITICAL IMPLEMENTATION REQUIREMENTS:
 
             try:
                 code_response_parts = []
-                res = self._call_llm(code_prompt, stream=True, timeout=3600, history=history)
+                res = self._call_llm(
+                    code_prompt,
+                    system_prompt=AGENTIC_CODEGEN_SYSTEM_PROMPT,
+                    stream=True,
+                    timeout=3600,
+                    history=history
+                )
                 if hasattr(res, "raise_for_status"):
                     res.raise_for_status()
 
@@ -343,7 +407,11 @@ Original Code:
 {code_extracted}
 
 Write the corrected Python code block only."""
-                    fix_res = self._call_llm(fix_prompt, timeout=3600)
+                    fix_res = self._call_llm(
+                        fix_prompt,
+                        system_prompt=AGENTIC_FIX_SYSTEM_PROMPT,
+                        timeout=3600
+                    )
                     fixed_code_match = re.search(r"```(?:python)?\s*([\s\S]*?)```", fix_res.json().get("message", {}).get("content", ""))
                     if fixed_code_match:
                         code_extracted = fixed_code_match.group(1).strip()
@@ -411,15 +479,9 @@ Get straight to the point and do not beat around the bush. Eliminate pleasantrie
             yield f"data: {json.dumps({'type': 'content', 'delta': divider})}\n\n"
 
         try:
-            default_sys = (
-                "You are SciCompute AI, an autonomous scientific materials & chemistry assistant with direct access to "
-                "retrieved workspace Jupyter notebooks (.ipynb), trained DeepMD models in Training/DP_Models/, "
-                "a Docker execution sandbox, and web search tools. Get straight to the point and do not beat around the bush. "
-                "Never state that you cannot execute code or lack environment access."
-            )
             stream_res = self._call_llm(
                 prompt=synthesis_prompt,
-                system_prompt=system_prompt or default_sys,
+                system_prompt=system_prompt or AGENTIC_SYNTHESIS_SYSTEM_PROMPT,
                 stream=True,
                 timeout=3600,
                 images=images,

@@ -43,7 +43,11 @@ class HybridRetriever:
             kg_context += (
                 "Knowledge Graph Fact: Anatase TiO2 Molecular Water Trajectory File:\n"
                 "- File Location: `ChatBot/public/Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz` (Mounted read-only in Docker sandbox at `/mnt/data/Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz`).\n"
-                "- Load directly in code with ASE: `read('/mnt/data/Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz', index=':')` with safe fallback to `ChatBot/public/Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz`.\n"
+                "- CRITICAL ASE SYNTAX: `read(path, index=':')` returns a Python list of Atoms (`list[ase.Atoms]`). "
+                "You MUST unpack the frame (`atoms = traj[0] if isinstance(traj, list) else traj`) before calling `atoms.get_positions()`. A list has no `.get_positions()` attribute.\n"
+                "- Physics & Chemistry: Anatase TiO2 slab with molecularly adsorbed water. The z-axis is the surface normal. "
+                "Features 5-fold coordinated Ti (Ti_5c CUS), bridging oxygens (O_br), and adsorbed water. Use `ase.neighborlist` for interfacial site cutoffs.\n"
+                "- Boundary Extraction: Never compare float coordinates with `==`. For slab boundaries along z, use layer tolerance `tol = 0.8` Å (`z <= z_min + tol` or `z >= z_max - tol`). For box boundaries, use fractional coordinates `scaled = atoms.get_scaled_positions(wrap=True)`.\n"
             )
         elif is_anatase_tio2_prompt(query):
             kg_context += (

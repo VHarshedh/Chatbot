@@ -250,18 +250,34 @@ def is_anatase_tio2_prompt(prompt: str) -> bool:
 def format_anatase_extxyz_context_prompt() -> str:
     """
     Formats the context prompt for Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz.
-    Provides ONLY the file location and sandbox mount path without sending pre-computed
-    atomic data, energy values, or lattice specifications.
+    Provides complete file locations, ASE API syntax requirements, and physical system details.
     """
     return (
         "### AVAILABLE STRUCTURE FILE: `Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz`\n"
         "The atomic trajectory / structure file is available at:\n"
         "- Docker Sandbox Mount Path: `/mnt/data/Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz`\n"
         "- Host/Workspace Path: `ChatBot/public/Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz`\n\n"
-        "Execution Guidelines:\n"
-        "- Load with ASE: `traj = read('/mnt/data/Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz', index=':')` (where `atoms = traj[0]` if `traj` is a list) or `atoms = read('...', index=0)`.\n"
+        "CRITICAL ASE PYTHON SYNTAX RULES (AVOID 'list' object has no attribute 'get_positions'):\n"
+        "- In ASE, `read(path, index=':')` returns a Python list of Atoms (`list[ase.Atoms]`), NOT a single Atoms object.\n"
+        "- A Python `list` has NO `.get_positions()`, `.get_cell()`, or `.positions` attributes. Calling `traj.get_positions()` will crash!\n"
+        "- Always extract the Atoms object before accessing coordinates:\n"
+        "  `traj = read('/mnt/data/Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz', index=':')`\n"
+        "  `atoms = traj[0] if isinstance(traj, list) else traj`\n"
+        "  `positions = atoms.get_positions()` (shape: N, 3)\n"
+        "  `symbols = np.array(atoms.get_chemical_symbols())`\n"
+        "  (Or directly read the single frame: `atoms = read('/mnt/data/Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz', index=0)`).\n\n"
+        "PHYSICAL & CHEMICAL SYSTEM GUIDELINES:\n"
+        "- System: Anatase TiO2 surface slab with molecularly adsorbed water (H2O).\n"
+        "- Surface Normal: The z-axis corresponds to the surface normal and water density direction.\n"
+        "- Surface Sites: Classify surface 5-fold coordinated Ti sites (Ti_5c / CUS) from topmost z-coordinates of Ti; bridging oxygens (O_br / O_2c); and adsorbed molecular water.\n"
+        "- Interfacial Analysis: Use `from ase.neighborlist import neighbor_list, natural_cutoffs` for neighbor cutoffs and coordination.\n"
         "- In extended XYZ, total energy is accessible via `atoms.get_potential_energy()` or `atoms.info.get('energy')`.\n"
-        "- Execute all calculations and plot generation inside the isolated Docker sandbox container.\n"
+        "BOUNDARY ATOMS & COORDINATE FILTERING GUIDELINES:\n"
+        "- Continuous Coordinate Tolerance: Never compare continuous float coordinates with `==` (e.g. `pos[:, 2] == z_min`). Float equality collapses an entire plane down to 1 or 2 isolated points.\n"
+        "- Slab Surface Boundary Layers: Use a physical layer tolerance `tol` (0.5 to 1.0 Å). Identify boundary atoms: `z_min, z_max = positions[:, 2].min(), positions[:, 2].max()`; `boundary_mask = (positions[:, 2] <= z_min + 0.8) | (positions[:, 2] >= z_max - 0.8)`.\n"
+        "- 3D Unit Cell Box Boundaries: Check fractional coordinates `scaled = atoms.get_scaled_positions(wrap=True)` within skin `delta` (e.g. 0.03): `np.any((scaled < 0.03) | (scaled > 0.97), axis=1)`.\n"
+        "- Output Verification: Print the count, chemical symbols, and coordinate arrays of the identified boundary atoms.\n"
+        "- Headless Plotting: Save figures as PNG (`plt.savefig(..., dpi=300, bbox_inches='tight')`) and call `plt.close()`. NEVER call `plt.show()`.\n"
     )
 
 def resolve_prompt_context(raw_text: str, notebook_path: Optional[str] = None) -> Dict[str, Any]:
