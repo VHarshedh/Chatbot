@@ -60,15 +60,14 @@ def create_batch_chain(output_dir: str, n_batches: int, system_params: dict, gra
 
 def generate_submit_chain_script(batch_dirs: list) -> str:
     """Generates submit_from.sh script for sequential slurm execution"""
-    script = "#!/bin/bash\n"
-    script += "prev_job=''\n"
+    script = "#!/bin/bash\nset -e\nprev_job=''\n"
     for i, b in enumerate(batch_dirs):
-        script += f"cd {b}\n"
+        script += f"cd \"{b}\"\n"
         if i == 0:
             script += "prev_job=$(sbatch --parsable lammps.sub)\n"
         else:
             script += "prev_job=$(sbatch --parsable --dependency=afterok:$prev_job lammps.sub)\n"
-        script += "cd ..\n"
+        script += "cd - > /dev/null\n"
     return script
 
 def check_md_status(batch_dir: str) -> dict:

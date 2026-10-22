@@ -100,3 +100,24 @@ def test_ingest_all_sessions(tmp_path):
     count = store.ingest_all_sessions(sqlite_path=str(db_file))
     assert count == 1
     assert mock_coll.upsert.called
+
+def test_turn_id_deterministic_sha256(tmp_path):
+    import hashlib
+    store = ChatMemoryStore(persist_dir=str(tmp_path))
+    store.embeddings.embed_documents = MagicMock(return_value=[[0.1] * 768])
+    mock_coll = MagicMock()
+    store.collection = mock_coll
+
+    session_id = 42
+    question = "How to calculate interfacial density?"
+    expected_hash = hashlib.sha256(f"{session_id}:{question}".encode("utf-8")).hexdigest()[:12]
+    expected_doc_id = f"turn_s{session_id}_{expected_hash}"
+
+    success = store.index_turn(
+        session_id=session_id,
+        user_message=question,
+        assistant_message="Use the mass density formula.",
+    )
+    assert success is True
+    assert mock_coll.upsert.call_args.kwargs["ids"] == [expected_doc_id]
+

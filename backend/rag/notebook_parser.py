@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 from typing import List, Dict, Any
 from backend.config import settings
-from backend.rag.vectorstore import VectorStore
+from backend.rag.vectorstore import VectorStore, provenance, chunk_header, stable_id, EXCLUDED_DIRS
 from backend.rag.knowledge_graph import KnowledgeGraph
 
 def extract_notebook_cells(notebook_path: str) -> List[Dict[str, Any]]:
@@ -26,17 +26,8 @@ def extract_notebook_cells(notebook_path: str) -> List[Dict[str, Any]]:
     extracted_docs = []
     nb_name = path.name
 
-    # Determine scientific domain from folder structure
-    domain = "General"
-    parent_name = path.parent.name
-    if "DFT" in parent_name or "DFT" in str(path):
-        domain = "DFT"
-    elif "Molecular Dynamics" in parent_name or "MD" in str(path):
-        domain = "Molecular Dynamics"
-    elif "Training" in parent_name:
-        domain = "DeepMD Training"
-    elif "Analysis" in parent_name:
-        domain = "Interfacial Analysis"
+    meta = provenance(path)
+    domain = meta["domain"]
 
     for idx, cell in enumerate(cells):
         cell_type = cell.get("cell_type", "unknown")
@@ -50,20 +41,24 @@ def extract_notebook_cells(notebook_path: str) -> List[Dict[str, Any]]:
         if not source_text:
             continue
 
-        header = f"### [Notebook: {nb_name} | Domain: {domain} | Cell {idx} ({cell_type.upper()})]\n"
+        if cell_type == "code" and not any(line.strip() and not line.lstrip().startswith("#") for line in source_text.splitlines()):
+            continue
+
+        header = chunk_header(meta) + f"### [Notebook: {nb_name} | Domain: {domain} | Cell {idx} ({cell_type.upper()})]\n"
         full_content = f"{header}{source_text}"
 
         extracted_docs.append({
             "content": full_content,
             "metadata": {
-                "source": str(path),
+                **meta,
+                "parent_id": stable_id(meta["source"], "notebook"),
                 "notebook_name": nb_name,
                 "domain": domain,
                 "cell_index": idx,
                 "cell_type": cell_type,
                 "doc_type": "notebook_cell"
             },
-            "id": f"nb_{path.stem}_cell_{idx}"
+            "id": stable_id(meta["source"], f"cell_{idx}")
         })
 
     return extracted_docs
@@ -78,7 +73,7 @@ def scan_workspace_notebooks(workspace_root: str = None) -> List[str]:
 
     for path in root.rglob("*.ipynb"):
         # Ignore checkpoints and cache folders
-        if ".ipynb_checkpoints" in path.parts or "venv" in path.parts or ".venv" in path.parts:
+        if EXCLUDED_DIRS.intersection(path.parts):
             continue
         notebook_paths.append(str(path))
 
@@ -150,21 +145,26 @@ def register_notebooks_in_knowledge_graph(notebook_paths: List[str] = None):
 
         try:
             kg.conn.execute(
-                f"MERGE (n:Notebook {{name: '{name}', path: '{safe_path}', domain: '{domain}'}})"
+                "MERGE (n:Notebook {name: $name}) SET n.path=$path, n.domain=$domain",
+                {"name": safe_path, "path": safe_path, "domain": domain}
             )
 
             # Link DFT notebook to Pt Material
             if domain == "DFT":
                 kg.conn.execute(
-                    f"MATCH (n:Notebook {{name: '{name}'}}), (m:Material {{symbol: 'Pt'}}) "
-                    f"MERGE (n)-[:operates_on]->(m)"
+                    "MATCH (n:Notebook {name: $name}), (m:Material {symbol: 'Pt'}) "
+                    "MERGE (n)-[:operates_on]->(m)", {"name": safe_path}
                 )
             # Link MD and Training notebooks to Water System
             elif domain in ("Molecular Dynamics", "DeepMD Training"):
                 kg.conn.execute(
-                    f"MATCH (n:Notebook {{name: '{name}'}}), (s:System {{name: 'Water'}}) "
-                    f"MERGE (n)-[:targets_system]->(s)"
+                    "MATCH (n:Notebook {name: $name}), (s:System {name: 'Water'}) "
+                    "MERGE (n)-[:targets_system]->(s)", {"name": safe_path}
                 )
+            tag = provenance(p)["system_tag"]
+            symbol = {"TiO2": "Ti", "IrO2": "Ir", "Graphene": "C"}.get(tag)
+            if symbol:
+                kg.conn.execute("MATCH (n:Notebook {name: $name}), (m:Material {symbol: $symbol}) MERGE (n)-[:operates_on]->(m)", {"name": safe_path, "symbol": symbol})
         except Exception as e:
             print(f"Error registering notebook {name} in Knowledge Graph: {e}")
 

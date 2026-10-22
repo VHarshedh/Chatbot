@@ -5,6 +5,7 @@ pydantic-settings
 langgraph
 langchain
 langchain-community
+langchain-text-splitters
 chromadb
 kuzu
 sqlite-vec

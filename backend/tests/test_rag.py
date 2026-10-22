@@ -5,7 +5,10 @@ from backend.rag.knowledge_graph import KnowledgeGraph
 
 def test_vectorstore_similarity_search(mocker):
     mock_collection = mocker.MagicMock()
+    mock_collection.count.return_value = 1
+    mock_collection.get.return_value = {"ids": ["doc"], "documents": ["Test document content"], "metadatas": [{"source": "test.md"}]}
     mock_collection.query.return_value = {
+        "ids": [["doc"]], "distances": [[0.2]],
         "documents": [["Test document content"]],
         "metadatas": [[{"source": "test.md"}]]
     }
@@ -45,7 +48,7 @@ def test_hybrid_retriever(mocker):
     mocker.patch("kuzu.Connection")
     
     mocker.patch("backend.rag.vectorstore.VectorStore.semantic_search", return_value=[{"content": "Vector doc", "metadata": {}}])
-    mocker.patch("backend.rag.knowledge_graph.KnowledgeGraph.graph_query", return_value=[["Pt_test.upf", 300]])
+    mocker.patch("backend.rag.knowledge_graph.KnowledgeGraph.graph_query", side_effect=[[["Pt_test.upf", "ONCV", "PBE"]], [["H, O", 300]]])
 
     hr = HybridRetriever()
     context = hr.retrieve("test query for Pt and Water")
@@ -100,8 +103,56 @@ def test_vectorstore_ingest_readmes(mocker, tmp_path):
 
 def test_vectorstore_ingest_exceptions(mocker):
     mocker.patch("chromadb.PersistentClient")
-    mocker.patch("backend.rag.vectorstore.DirectoryLoader.load", side_effect=Exception("Load fail"))
+    mocker.patch("backend.rag.vectorstore.os.walk", return_value=[])
     from backend.rag.vectorstore import ingest_readmes
     ingest_readmes()  # Should catch exception and return safely
+
+
+def test_ollama_embeddings_runtime_error_reraised(mocker):
+    from backend.rag.embeddings import OllamaEmbeddings
+    mock_resp = mocker.MagicMock()
+    mock_resp.status_code = 404
+    mock_resp.text = "model 'xyz' not found"
+    mocker.patch("requests.post", return_value=mock_resp)
+
+    emb = OllamaEmbeddings(model="xyz")
+    with pytest.raises(RuntimeError, match="Model 'xyz' was not found in Ollama"):
+        emb.embed_documents(["sample text"])
+
+
+def test_ollama_embeddings_connection_error_raised(mocker):
+    import requests
+    from backend.rag.embeddings import OllamaEmbeddings
+    mocker.patch("requests.post", side_effect=requests.exceptions.ConnectionError("Connection refused"))
+
+    emb = OllamaEmbeddings()
+    with pytest.raises(RuntimeError, match="Could not connect to Ollama"):
+        emb.embed_documents(["sample text"])
+
+
+def test_knowledge_graph_singleton(mocker):
+    mocker.patch("kuzu.Database")
+    mocker.patch("kuzu.Connection")
+    KnowledgeGraph._instance = None
+    kg1 = KnowledgeGraph.get_instance()
+    kg2 = KnowledgeGraph.get_instance()
+    assert kg1 is kg2
+
+
+def test_hybrid_retriever_is_mol_skips_vector_search(mocker):
+    mocker.patch("backend.rag.vectorstore.OllamaEmbeddings")
+    mocker.patch("chromadb.PersistentClient")
+    mocker.patch("kuzu.Database")
+    mocker.patch("kuzu.Connection")
+
+    mock_search = mocker.patch("backend.rag.vectorstore.VectorStore.semantic_search")
+    mocker.patch("backend.rag.knowledge_graph.KnowledgeGraph.graph_query", return_value=[])
+
+    hr = HybridRetriever()
+    mol_query = "Calculate interfacial density profile of water on Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz"
+    context = hr.retrieve(mol_query)
+    mock_search.assert_not_called()
+    assert "Trajectory File Path" in context
+
 
 

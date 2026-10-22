@@ -180,7 +180,7 @@ def format_notebook_context_prompt(context: Dict[str, Any]) -> str:
     env = context.get("environment", {})
     pkgs = ", ".join(env.get("installed_packages", ["ase", "mace-torch"])) or "ase, mace-torch"
     system_name = context.get("system_name", "molecular")
-    traj_path = context.get("traj_path_resolved") or f"/content/MPtrj/{system_name}/Anatase_wrapped.extxyz"
+    traj_path = context.get("traj_path_resolved") or context.get("traj_file") or f"/content/MPtrj/{system_name}/Anatase__{system_name}_wrapped.extxyz"
     system_label = context.get("detected_system", "Anatase (TiO2) / Water Interface")
 
     return (
@@ -199,7 +199,7 @@ def format_notebook_context_prompt(context: Dict[str, Any]) -> str:
         f"%pip install ase mace-torch\n\n"
         f"from ase.io import read\n"
         f'system_name = "{system_name}"\n'
-        f"traj_file = f'/content/MPtrj/{{system_name}}/Anatase_wrapped.extxyz'\n"
+        f'traj_file = "{traj_path}"\n'
         f"traj = read(traj_file, index=':')  # Pre-loaded in notebook memory!\n"
         f"```\n\n"
         f"3. Target Physical System & Structure:\n"

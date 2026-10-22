@@ -2,6 +2,7 @@ import os
 import re
 import json
 import sqlite3
+import hashlib
 from typing import List, Dict, Any, Optional
 import chromadb
 from backend.config import settings
@@ -45,12 +46,22 @@ class ChatMemoryStore:
         assistant_message: str,
         agent_used: str = "Assistant",
         session_title: Optional[str] = None,
-        turn_id: Optional[str] = None
+        turn_id: Optional[str] = None,
+        execution_required: Optional[bool] = None,
+        exit_code: Optional[int] = None,
+        evaluation_score: Optional[float] = None
     ) -> bool:
         """
         Indexes a single user-assistant exchange into ChromaDB cross-session memory.
         """
         if not user_message or not assistant_message:
+            return False
+
+        if execution_required is None:
+            # Unknown historical code is never assumed to have executed successfully.
+            execution_required = bool(re.search(r"```|\b(run|execute)\b", assistant_message + " " + user_message, re.I))
+        verified = not execution_required or exit_code == 0 or (evaluation_score is not None and evaluation_score >= 80)
+        if not verified:
             return False
 
         clean_user = user_message.strip()
@@ -65,13 +76,15 @@ class ChatMemoryStore:
             f"Assistant Response: {clean_asst}"
         )
 
-        doc_id = turn_id or f"turn_s{session_id}_{abs(hash(clean_user[:80]))}"
+        turn_hash = hashlib.sha256(f"{session_id}:{clean_user}".encode("utf-8")).hexdigest()[:12]
+        doc_id = turn_id or f"turn_s{session_id}_{turn_hash}"
         metadata = {
             "session_id": int(session_id),
             "session_title": str(session_title or f"Session {session_id}")[:120],
             "agent_used": str(agent_used or "Assistant"),
             "user_snippet": clean_user[:400],
-            "assistant_snippet": clean_asst[:600]
+            "assistant_snippet": clean_asst[:600],
+            "verified_execution": True
         }
 
         try:
@@ -109,76 +122,33 @@ class ChatMemoryStore:
             conn.close()
             return 0
 
-        all_docs = []
-        all_metas = []
-        all_ids = []
-
-        for s in sessions:
-            sid = s["id"]
-            stitle = s["title"] or f"Session {sid}"
-
-            cursor.execute(
-                "SELECT id, role, content, agent_used, timestamp FROM messages WHERE session_id = ? ORDER BY id ASC",
-                (sid,)
-            )
-            msgs = [dict(r) for r in cursor.fetchall()]
-
-            # Group messages into conversational exchanges (User -> Assistant)
-            i = 0
-            turn_idx = 1
-            while i < len(msgs):
-                if msgs[i]["role"] == "user":
-                    user_text = msgs[i]["content"] or ""
-                    asst_text = ""
-                    agent_used = "Assistant"
-                    if i + 1 < len(msgs) and msgs[i + 1]["role"] == "assistant":
-                        asst_text = msgs[i + 1]["content"] or ""
-                        agent_used = msgs[i + 1].get("agent_used") or "Assistant"
-                        i += 2
-                    else:
-                        i += 1
-
-                    if user_text and asst_text:
-                        clean_asst = self.clean_text(asst_text)
-                        doc_text = (
-                            f"Session #{sid} ({stitle})\n"
-                            f"User Question: {user_text.strip()}\n"
-                            f"Assistant Response: {clean_asst}"
-                        )
-                        doc_id = f"turn_s{sid}_m{turn_idx}"
-                        metadata = {
-                            "session_id": int(sid),
-                            "session_title": str(stitle)[:120],
-                            "agent_used": str(agent_used),
-                            "user_snippet": user_text.strip()[:400],
-                            "assistant_snippet": clean_asst[:600]
-                        }
-                        all_docs.append(doc_text)
-                        all_metas.append(metadata)
-                        all_ids.append(doc_id)
-                        turn_idx += 1
-                else:
-                    i += 1
-
-        conn.close()
-
-        if not all_docs:
-            return 0
-
+        count = 0
         try:
-            print(f"Embedding and ingesting {len(all_docs)} past conversational turns into ChromaDB memory...")
-            embeddings = self.embeddings.embed_documents(all_docs)
-            self.collection.upsert(
-                documents=[all_docs[i] for i in range(len(all_docs))],
-                embeddings=embeddings,
-                metadatas=[all_metas[i] for i in range(len(all_metas))],
-                ids=[all_ids[i] for i in range(len(all_ids))]
-            )
-            print(f"Successfully ingested {len(all_docs)} past conversational turns into memory.")
-            return len(all_docs)
-        except Exception as e:
-            print(f"Error ingesting past sessions into memory: {e}")
-            return 0
+            for session in sessions:
+                cursor.execute("SELECT * FROM messages WHERE session_id = ? ORDER BY id", (session["id"],))
+                messages = [dict(row) for row in cursor.fetchall()]
+                for user, assistant in zip(messages, messages[1:]):
+                    if user["role"] != "user" or assistant["role"] != "assistant":
+                        continue
+                    try:
+                        quality = json.loads(assistant.get("tool_calls_json") or "{}")
+                    except (ValueError, TypeError):
+                        quality = {}
+                    # Legacy traces are not reliable execution evidence.
+                    if isinstance(quality, list):
+                        quality = next((item for item in reversed(quality) if isinstance(item, dict) and "memory_quality" in item), {})
+                    quality = quality.get("memory_quality", {}) if isinstance(quality, dict) else {}
+                    count += self.index_turn(
+                        session_id=session["id"], user_message=user["content"],
+                        assistant_message=assistant["content"],
+                        agent_used=assistant.get("agent_used"), session_title=session["title"],
+                        execution_required=quality.get("execution_required"),
+                        exit_code=quality.get("exit_code"),
+                        evaluation_score=quality.get("evaluation_score"),
+                    )
+            return count
+        finally:
+            conn.close()
 
     def search_memory(
         self,
@@ -203,7 +173,8 @@ class ChatMemoryStore:
             n_fetch = min(n_results * 3, count)
             results = self.collection.query(
                 query_embeddings=[query_emb],
-                n_results=n_fetch
+                n_results=n_fetch,
+                where={"verified_execution": True}
             )
 
             matches = []

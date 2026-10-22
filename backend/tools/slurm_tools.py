@@ -1,5 +1,6 @@
 import subprocess
 import re
+import shlex
 from backend.config import settings
 
 def _run_ssh_cmd(cmd: str) -> str:
@@ -12,11 +13,12 @@ def _run_ssh_cmd(cmd: str) -> str:
     
     if host == "localhost":
         # Local mock execution for testing
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        cmd_args = shlex.split(cmd) if isinstance(cmd, str) else cmd
+        result = subprocess.run(cmd_args, capture_output=True, text=True)
         return result.stdout
         
-    ssh_cmd = f"ssh -i {key} {user}@{host} '{cmd}'"
-    result = subprocess.run(ssh_cmd, shell=True, capture_output=True, text=True)
+    ssh_cmd = ["ssh", "-i", str(key), f"{user}@{host}", cmd]
+    result = subprocess.run(ssh_cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"SSH command failed: {result.stderr}")
     return result.stdout

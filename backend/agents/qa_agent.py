@@ -22,6 +22,10 @@ class QAAgent:
         self.model = settings.MODEL_NAME
         self.base_url = settings.OLLAMA_BASE_URL
         
+    def answer_question(self, question: str) -> str:
+        """Alias for answer() method."""
+        return self.answer(question)
+
     def answer(self, question: str) -> str:
         # 1. Retrieve context
         print("Retrieving context...")

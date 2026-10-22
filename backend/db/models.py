@@ -4,19 +4,47 @@ import json
 import re
 from backend.config import settings
 
-INTERFACIAL_ANALYSIS_BENCHMARK_PROMPT = (
-    "Write a complete, self-contained scientific Python script using ASE, NumPy, and Matplotlib to analyze "
-    "an interfacial metal-oxide/water system (template: IrO2/H2O) from DeepMD .extxyz trajectories across multiple DP models. "
-    "Your script must:\n"
-    "1. Classify surface metal atoms (M_sur from topmost z-layer), bulk vs water oxygens (O_bulk vs O_w via stoichiometry), "
-    "coordinatively unsaturated metal sites (CUS), and adsorbed vs bridge oxygens (O_adb, O_br).\n"
-    "2. Compute water mass density profiles along the z-axis (g/cm^3) and pair radial distribution functions (RDFs: M_cus-O_w, O_br-H_w, O_br-O_w).\n"
-    "3. Track surface hydroxylation / dissociation fractions (OH vs intact H2O) using neighbor distance cutoffs (~1.2 A), and compute the water survival probability P(t) over log-spaced time lags tau via continuous set intersections.\n"
-    "4. Loop over multiple DP models, computing the cross-model mean and standard deviation (mean +/- std).\n"
-    "5. Save individual plots for density, RDF, survival, and fraction, as well as a combined 2x2 multi-panel summary presentation figure (full_analysis_presentation.png).\n"
-    "6. Write a summary_report.txt file with average residence times (integrated from P(t)) and dissociated/molecular fractions.\n"
-    "Do not beat around the bush or provide conversational filler; get straight to the point. Output only the complete Python code block."
-)
+INTERFACIAL_ANALYSIS_BENCHMARK_PROMPT = r"""Write a complete, self-contained, executable scientific Python script using ASE (`ase.io.read`, `ase.neighborlist.neighbor_list`), NumPy, and Matplotlib (`Agg` backend) to analyze an interfacial metal-oxide/water trajectory (`MO2/H2O`, stoichiometry `s = 2`, metal symbol `m = 'Ti'` or `'Ir'`) across Deep Potential (DP) ensemble models (`dp = 3`, `modelz = list(range(1, dp + 1))`).
+
+Your script must implement all 6 stages below in full without placeholders or mock data:
+
+1. DATA LOADING & ENSEMBLE FALLBACK:
+   - Loop over `mod_idx in range(1, dp + 1)`. Try loading `f"{base_dir}/{mod_idx}/iro2_water_concat.extxyz"` with `index=slice(0, None, 10)`.
+   - If the per-model file is not found, fall back to the pre-loaded `traj` variable in globals/locals (or load `traj_file` / `'/mnt/data/Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz'`), wrapping a single frame into `[traj]` if needed: `frames = traj if isinstance(traj, list) else [traj]`.
+   - Auto-detect the metal element symbol `m` (e.g., `'Ir'` or `'Ti'`) from `atoms0.get_chemical_symbols()` (any element other than `'O'` and `'H'`).
+
+2. INTERFACIAL SITE CLASSIFICATION (Frame 0):
+   - Wrap positions and enable PBC: `atoms0.wrap(); atoms0.set_pbc(True)`.
+   - Surface Metal (`m_sur_index`): metal atoms with $z \ge \max(m_z) - 1.5$ Å.
+   - Bulk vs. Water Oxygen (`o_bul_index` vs. `o_w_index`): sort all oxygen $z$-coordinates; the lowest $s \times N_{\text{metal}}$ oxygens ($s = 2$) are bulk lattice oxygens (`o_bul_index`), and the remaining oxygens are water oxygens (`o_w_index`).
+   - CUS Metal (`m_cus_index`) & Adsorbed Water Oxygen (`o_adb_index`): pairs $(i \in m_{\text{sur}}, j \in O_w)$ with `atoms0.get_distance(i, j, mic=True) <= 2.5` Å.
+   - Surface Bridge Oxygen (`o_sur_index`): the top `len(m_cus_index)` oxygens within the bulk oxide z-sorted list (`o_z[s * len(m_z) - len(m_cus_index) : s * len(m_z)]`).
+
+3. WATER MASS DENSITY PROFILE & PAIR RDFs:
+   - Z-Mass Density Profile (`bin_width = 0.10` Å): histogram $z$-coordinates of `O_w` and `H_w` into `bins`, convert counts to physical mass density ($\text{g/cm}^3$) using water molar mass $18.01528\text{ g/mol}$, Avogadro's number $6.023 \times 10^{23}$, and slab bin volume `volume = cell[0][0] * cell[1][1] * bin_width`:
+     `mass_dens_ow = ((freq_ow / 6.023e23) * 18.01528) / (volume * 1e-24)`
+     `mass_dens_hw = ((freq_hw / (2.0 * 6.023e23)) * 18.01528) / (volume * 1e-24)`
+   - Pair Radial Distribution Functions ($g(r)$, `dr = 0.05` Å, $r \in [0, 6.5]$ Å): compute pair distance histograms normalized by spherical shell volume $4\pi r^2 dr$ for the 3 interfacial pairs:
+     (a) $M_{\text{cus}}\text{--}O_w$ (`g_mow`), (b) $O_{\text{br}}\text{--}H_w$ (`g_osh`), and (c) $O_{\text{br}}\text{--}O_w$ (`g_osow`).
+
+4. SURFACE HYDROXYLATION FRACTIONS & CONTINUOUS SURVIVAL PROBABILITY P(t):
+   - For each frame, use `i_idx, _, _ = neighbor_list('ijd', frame, {('O', 'H'): 1.2}, self_interaction=False)` and `o_h_counts = np.bincount(i_idx, minlength=len(frame))`.
+   - For each `idx in o_adb_idx`: classify `o_h_counts[idx] == 1` as Dissociated (`OH`/`OD`, `oh_frame`) and `o_h_counts[idx] == 2` as Molecular (`H2O`/`D2O`, `h2o_frame`). Record instantaneous percentages `frac_oh` and `frac_h2o`.
+   - Convert frame lists to sets `oh_sets = [set(f) for f in indx_oh]` and `h2o_sets = [set(f) for f in indx_h2o]`.
+   - Over time lags `tau_range = np.linspace(0, num_f - 1, min(101, max(2, num_f)), dtype=int)`, compute continuous survival probability $P(\tau)$ via set intersection across all intermediate frames:
+     `len(set.intersection(*oh_sets[j:j+tau+1])) / len(oh_sets[j])` and `len(set.intersection(*h2o_sets[j:j+tau+1])) / len(h2o_sets[j])`.
+   - Compute mean residence time $\tau = \frac{\int t P(t) dt}{\int P(t) dt}$ using `trapz_fn = getattr(np, 'trapezoid', np.trapz)`.
+
+5. ENSEMBLE AVERAGING & INTERMEDIATE `.npz` STORAGE:
+   - Compute cross-model `np.mean(..., axis=0)` and `np.std(..., axis=0)` across the `dp` models.
+   - Save `simulation_results.npz` (keys: `m_symbol`, `ow_y`, `hw_y`, `bins_z`, `rd`, `g_mow`, `g_osh`, `g_osow`) and `survival_fraction_results.npz` (keys: `m_symbol`, `times_surv`, `surv_oh`, `surv_h2o`, `frac_oh`, `frac_h2o`, `dt_ns`).
+
+6. PUBLICATION FIGURES & SUMMARY REPORT:
+   - Generate and save a 2x2 presentation figure `full_analysis_presentation.png` (`figsize=(14, 11)`, `dpi=300`) with shaded $\pm 1\sigma$ uncertainty bands (`ax.fill_between(...)`) for:
+     (A) Water Mass Density Profile, (B) Pair RDFs, (C) Survival Probability $P(t)$, and (D) Dissociation Fraction (%). Call `plt.close()` after saving.
+   - Write `summary_report.txt` containing the ensemble mean $\pm$ std for dissociated fraction (`OD`/`OH` %), molecular fraction (`D2O`/`H2O` %), and residence times $\tau_{\text{OD}}$ and $\tau_{\text{D2O}}$ in ns.
+
+Output ONLY the complete Python code block enclosed in ```python ... ```."""
 
 DEFAULT_BENCHMARK_PROMPTS = [
     {
@@ -30,35 +58,36 @@ DEFAULT_BENCHMARK_PROMPTS = [
         "id": "dft_cutoff",
         "domain": "DFT",
         "title": "Pt SCF Convergence Parameters",
-        "prompt": "What are the recommended plane-wave kinetic energy cutoff (ecutwfc) and charge density cutoff (ecutrho) for Platinum (Pt) using a PBE PAW or ONCV pseudopotential in Quantum ESPRESSO? Please write a sample &SYSTEM namelist block.",
+        "prompt": "Specify the recommended plane-wave kinetic energy cutoff (ecutwfc in Ry) and charge-density cutoff (ecutrho in Ry) for fcc Platinum (Pt, nat=4, ntyp=1) using the ONCV norm-conserving pseudopotential (Pt_ONCV_PBE-1.2.upf, ecutrho = 4 * ecutwfc) versus a PAW pseudopotential (ecutrho = 8 to 12 * ecutwfc) in Quantum ESPRESSO. Provide a complete, syntactically valid pw.in input file including &CONTROL, &SYSTEM (ibrav=0, Marzari-Vanderbilt cold smearing degauss=0.02 Ry, nbnd=44), &ELECTRONS (conv_thr=1.0d-8), ATOMIC_SPECIES, CELL_PARAMETERS (angstrom, a=3.943 Å), ATOMIC_POSITIONS (angstrom), and K_POINTS automatic.",
         "is_default": 1
     },
     {
         "id": "md_chaining",
         "domain": "Molecular Dynamics",
         "title": "DeePMD LAMMPS Interface Script",
-        "prompt": "Write a minimal LAMMPS in.lammps input script for an NVT production run of an interfacial water system driven by a pair_style deepmd potential. Include velocity creation, thermostatting at 300K, and periodic restart writes.",
+        "prompt": "Write a complete LAMMPS input script (in.lammps) and a companion SLURM dependency-chaining bash script (submit_from.sh) for an NVT production run of liquid water at 300 K driven by an ensemble of 3 DeepMD frozen graphs (graph1.pb, graph2.pb, graph3.pb). Include: (1) plugin load libdeepmd_lmp.so, metal units, 3D periodic boundaries, atomic style, (2) conditional read_data vs read_restart lammps.restart, (3) masses for H (2.014) and O (15.999), (4) pair_style deepmd with out_file md.out out_freq 100 and pair_coeff * *, (5) fix 1 all nvt temp 300 300 0.1 with timestep 0.0005 ps, (6) timer timeout and write_restart lammps.restart, and (7) a bash loop chaining batches via sbatch --parsable --dependency=afterok:$PREV_JOBID.",
         "is_default": 1
     },
     {
         "id": "training_format",
         "domain": "DeepMD Training",
         "title": "Raw Data to Binary Sets",
-        "prompt": "In DeePMD-kit, what is the exact layout of raw data files (coord.raw, box.raw, energy.raw, force.raw) and how are they converted into set.000 numpy binary datasets for training?",
+        "prompt": "Explain the exact frame-by-frame dimensional layout and physical units of DeePMD-kit raw files (coord.raw [N_frames x 3*N_atoms in Å], box.raw [N_frames x 9 in Å], energy.raw [N_frames x 1 in eV], force.raw [N_frames x 3*N_atoms in eV/Å], virial.raw [N_frames x 9 in eV], and 0-indexed type.raw [1 x N_atoms] + type_map.raw). Then write a complete, self-contained Python script that splits raw files into disjoint train/Test sets (without data leakage), converts chunks of 2000 frames into set.000/*.npy float32 binary arrays, and outputs a valid DeePMD-kit se_e2_a input.json configuration.",
         "is_default": 1
     },
     {
         "id": "analysis_kinetics",
         "domain": "Interfacial Analysis",
         "title": "Surface Sites & Survival Probability",
-        "prompt": "Explain how coordinatively unsaturated (CUS) metal sites and adsorbed water oxygens (O_adb) are structurally classified on a metal oxide surface, and write the mathematical definition of the water survival probability P(t).",
+        "prompt": "Formulate the structural classification criteria and kinetic equations for metal-oxide/water interfaces (IrO2/H2O and Anatase TiO2/H2O): (1) mathematical definitions and z-coordinate / radial cutoffs for surface metal atoms (M_sur, z >= z_max - 1.5 Å), bulk vs water oxygens (s * N_metal), coordinatively unsaturated sites (CUS, r_M-Ow <= 2.5 Å), bridge oxygens (O_br), and dissociated OH vs molecular H2O (r_O-H <= 1.2 Å); (2) the continuous time-correlation survival probability P(t) via multi-frame set intersections over [t_0, t_0 + tau]; and (3) mean residence time tau via trapezoidal integration, alongside a concise Python implementation using ase.neighborlist and numpy.",
         "is_default": 1
     }
 ]
 
 def get_db_connection():
-    conn = sqlite3.connect(settings.SQLITE_PATH)
+    conn = sqlite3.connect(settings.SQLITE_PATH, timeout=15.0)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL;")
     return conn
 
 def execute_query(query: str, params: tuple = ()) -> List[sqlite3.Row]:
@@ -101,6 +130,18 @@ def insert_message(
     cursor.execute(
         "INSERT INTO messages (session_id, role, content, agent_used, tool_calls_json, images_json) VALUES (?, ?, ?, ?, ?, ?)",
         (session_id, role, content, agent_used, tool_calls_json, images_json)
+    )
+    cursor.execute("PRAGMA table_info(sessions)")
+    session_columns = [col[1] for col in cursor.fetchall()]
+    if "last_message_at" not in session_columns:
+        try:
+            cursor.execute("ALTER TABLE sessions ADD COLUMN last_message_at TIMESTAMP")
+            conn.commit()
+        except Exception:
+            pass
+    cursor.execute(
+        "UPDATE sessions SET last_message_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (session_id,)
     )
     conn.commit()
     conn.close()

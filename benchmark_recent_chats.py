@@ -139,7 +139,7 @@ def run_benchmark_on_chats(limit: int = 2, session_id: Optional[int] = None, sav
         
         # Execute Evaluation
         start_eval = True
-        eval_result = evaluator.evaluate(raw_response, prompt=prompt)
+        eval_result = evaluator.evaluate(raw_response, prompt=prompt, session_id=s_id if save_to_db else None)
         
         score = eval_result.get("score", 0.0)
         grade = eval_result.get("grade", "F")
@@ -158,10 +158,19 @@ def run_benchmark_on_chats(limit: int = 2, session_id: Optional[int] = None, sav
         print(f"  📊 Checks: {len(passed_checks)} Passed, {len(failed_checks)} Failed")
         
         print("\n  Category Breakdown:")
+        MAX_BY_CAT = {"execution_integrity": 25, "scientific_accuracy": 35, "task_compliance": 25, "code_quality": 15}
         for cat_key, cat_val in category_scores.items():
-            cat_score = cat_val.get("score", 0)
-            cat_max = cat_val.get("max", 0)
-            cat_pct = cat_val.get("pct", 0)
+            if isinstance(cat_val, dict):
+                cat_score = cat_val.get("score", 0)
+                cat_max = cat_val.get("max", 25)
+                cat_pct = cat_val.get("pct", int(round(100 * cat_score / max(cat_max, 1))))
+            else:
+                try:
+                    cat_score = int(cat_val)
+                except (ValueError, TypeError):
+                    cat_score = 0
+                cat_max = MAX_BY_CAT.get(cat_key, 25)
+                cat_pct = int(round(100 * cat_score / max(cat_max, 1)))
             bar = render_progress_bar(cat_pct)
             cat_name = cat_key.replace("_", " ").title()
             print(f"    • {cat_name:<30} {bar} {cat_score:2d}/{cat_max:2d} pts ({cat_pct:3d}%)")
@@ -190,27 +199,32 @@ def run_benchmark_on_chats(limit: int = 2, session_id: Optional[int] = None, sav
                 
         # Persist to database evaluations table
         if save_to_db:
-            try:
-                eval_id = insert_evaluation(
-                    session_id=s_id,
-                    model_name=settings.MODEL_NAME,
-                    prompt=prompt,
-                    generated_code=extracted_code,
-                    score=score,
-                    grade=grade,
-                    category_scores_json=json.dumps(category_scores),
-                    evaluation_report_json=json.dumps({
-                        "passed_checks": passed_checks,
-                        "failed_checks": failed_checks,
-                        "summary": summary,
-                        "evaluation_type": eval_type
-                    }),
-                    latency_seconds=0.0
-                )
+            eval_id = eval_result.get("evaluation_id")
+            if not eval_id:
+                try:
+                    eval_id = insert_evaluation(
+                        session_id=s_id,
+                        model_name=eval_result.get("model", settings.MODEL_NAME),
+                        prompt=prompt,
+                        generated_code=extracted_code,
+                        score=score,
+                        grade=grade,
+                        category_scores_json=json.dumps(category_scores),
+                        evaluation_report_json=json.dumps({
+                            "passed_checks": passed_checks,
+                            "failed_checks": failed_checks,
+                            "summary": summary,
+                            "evaluation_type": eval_type
+                        }),
+                        latency_seconds=0.0
+                    )
+                    print(f"\n  💾 Stored evaluation report into database (Eval ID #{eval_id}).")
+                    print(f"     This will now appear in the frontend 'Accuracy Benchmarks' sidebar list.")
+                except Exception as e:
+                    print(f"  ⚠️ Could not save evaluation to DB: {e}")
+            else:
                 print(f"\n  💾 Stored evaluation report into database (Eval ID #{eval_id}).")
                 print(f"     This will now appear in the frontend 'Accuracy Benchmarks' sidebar list.")
-            except Exception as e:
-                print(f"  ⚠️ Could not save evaluation to DB: {e}")
                 
         print("\n" + "=" * 78)
         

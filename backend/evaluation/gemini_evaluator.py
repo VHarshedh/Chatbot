@@ -26,8 +26,8 @@ class GeminiEvaluator:
     Incorrect outputs or failing code are severely penalized around 20%.
     """
 
-    PRIMARY_MODEL = getattr(settings, "GEMINI_MODEL", "gemini-3.5-flash-lite") or "gemini-3.5-flash-lite"
-    FALLBACK_MODELS = ["gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-flash-latest"]
+    PRIMARY_MODEL = getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash"
+    FALLBACK_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-flash-latest"]
 
     STRICT_SYSTEM_PROMPT = (
         "You are an ultra-strict, ruthless scientific code auditor and senior computational materials scientist.\n"
@@ -117,6 +117,43 @@ class GeminiEvaluator:
         Runs strict evaluation of code using Gemini 3.8 Flash.
         Persists the result into the evaluations table and returns the audit dictionary.
         """
+        if not code_or_response or not code_or_response.strip():
+            return {
+                "score": 0,
+                "grade": "F",
+                "verdict": "FAIL",
+                "summary": "Evaluation failed: Empty code or response provided.",
+                "execution_status": "Failed",
+                "category_scores": {"execution_integrity": 0, "scientific_accuracy": 0, "task_compliance": 0, "code_quality": 0},
+                "critical_issues": ["Empty code submission: no Python script was provided to evaluate."],
+                "strengths": [],
+                "recommendations": ["Provide a complete, syntactically valid Python script."],
+                "passed_checks": [],
+                "failed_checks": ["Empty code submission"],
+                "model": "none",
+                "latency_seconds": 0.0,
+                "extracted_code": ""
+            }
+
+        code = self.extract_python_code(code_or_response)
+        if not code:
+            return {
+                "score": 0,
+                "grade": "F",
+                "verdict": "FAIL",
+                "summary": "Evaluation failed: Empty Python code block extracted from response.",
+                "execution_status": "Failed",
+                "category_scores": {"execution_integrity": 0, "scientific_accuracy": 0, "task_compliance": 0, "code_quality": 0},
+                "critical_issues": ["No executable Python code found in the model response."],
+                "strengths": [],
+                "recommendations": ["Ensure the model outputs code inside a ```python ... ``` block."],
+                "passed_checks": [],
+                "failed_checks": ["No executable Python code found"],
+                "model": "none",
+                "latency_seconds": 0.0,
+                "extracted_code": ""
+            }
+
         api_key = self._get_api_key()
         if not api_key:
             return {
@@ -129,12 +166,13 @@ class GeminiEvaluator:
                 "critical_issues": ["Missing GEMINI_API_KEY in environment variables."],
                 "strengths": [],
                 "recommendations": ["Add a valid GEMINI_API_KEY to your .env file to enable Gemini code evaluation."],
+                "passed_checks": [],
+                "failed_checks": ["Missing GEMINI_API_KEY in environment variables."],
                 "model": "none",
                 "latency_seconds": 0.0,
-                "extracted_code": ""
+                "extracted_code": code
             }
 
-        code = self.extract_python_code(code_or_response)
         if not execution_output:
             execution_output = self.extract_sandbox_output(code_or_response)
 
@@ -204,6 +242,8 @@ class GeminiEvaluator:
                 "critical_issues": [f"API Error: {error_msg}"],
                 "strengths": [],
                 "recommendations": ["Check network connection and Gemini API rate limits/quotas."],
+                "passed_checks": [],
+                "failed_checks": [f"API Error: {error_msg}"],
                 "model": used_model or self.PRIMARY_MODEL,
                 "latency_seconds": round(latency, 2),
                 "extracted_code": code
@@ -222,29 +262,30 @@ class GeminiEvaluator:
 
         # Persist into DB
         eval_id = None
-        try:
-            eval_report = {
-                "summary": summary,
-                "verdict": verdict,
-                "execution_status": exec_status,
-                "critical_issues": critical_issues,
-                "strengths": strengths,
-                "recommendations": recommendations,
-                "evaluator_model": used_model
-            }
-            eval_id = insert_evaluation(
-                session_id=session_id,
-                model_name=used_model,
-                prompt=task_desc,
-                generated_code=code,
-                score=float(score),
-                grade=grade,
-                category_scores_json=json.dumps(cat_scores),
-                evaluation_report_json=json.dumps(eval_report),
-                latency_seconds=round(latency, 2)
-            )
-        except Exception as e:
-            print(f"Notice: Failed to insert evaluation into DB: {e}")
+        if session_id is not None:
+            try:
+                eval_report = {
+                    "summary": summary,
+                    "verdict": verdict,
+                    "execution_status": exec_status,
+                    "critical_issues": critical_issues,
+                    "strengths": strengths,
+                    "recommendations": recommendations,
+                    "evaluator_model": used_model
+                }
+                eval_id = insert_evaluation(
+                    session_id=session_id,
+                    model_name=used_model,
+                    prompt=task_desc,
+                    generated_code=code,
+                    score=float(score),
+                    grade=grade,
+                    category_scores_json=json.dumps(cat_scores),
+                    evaluation_report_json=json.dumps(eval_report),
+                    latency_seconds=round(latency, 2)
+                )
+            except Exception as e:
+                print(f"Notice: Failed to insert evaluation into DB: {e}")
 
         return {
             "evaluation_id": eval_id,
@@ -257,6 +298,8 @@ class GeminiEvaluator:
             "critical_issues": critical_issues,
             "strengths": strengths,
             "recommendations": recommendations,
+            "passed_checks": strengths,
+            "failed_checks": critical_issues,
             "model": used_model,
             "latency_seconds": round(latency, 2),
             "extracted_code": code,

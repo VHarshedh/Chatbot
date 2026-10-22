@@ -34,6 +34,11 @@ def generate_qe_scf_input(structure: dict, ecutwfc: float, kpoints: list, pseudo
         mass = 1.0 if el == 'H' else 16.0 if el == 'O' else 195.08 if el == 'Pt' else 1.0
         input_str += f"  {el} {mass} {pseudo}\n"
         
+    if "cell" in structure and structure["cell"]:
+        input_str += "CELL_PARAMETERS (angstrom)\n"
+        for vec in structure["cell"]:
+            input_str += f"  {vec[0]:.8f} {vec[1]:.8f} {vec[2]:.8f}\n"
+
     input_str += "ATOMIC_POSITIONS (angstrom)\n"
     for sym, pos in zip(symbols, structure["positions"]):
         input_str += f"  {sym} {pos[0]:.6f} {pos[1]:.6f} {pos[2]:.6f}\n"

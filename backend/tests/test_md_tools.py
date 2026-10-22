@@ -37,7 +37,8 @@ def test_create_batch_chain(mocker):
 def test_generate_submit_chain_script():
     dirs = ["batch_1", "batch_2"]
     script = generate_submit_chain_script(dirs)
-    assert "cd batch_1" in script
+    assert 'cd "batch_1"' in script
+    assert "cd - > /dev/null" in script
     assert "sbatch --parsable lammps.sub" in script
     assert "--dependency=afterok:$prev_job" in script
 

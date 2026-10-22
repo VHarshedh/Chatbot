@@ -10,7 +10,7 @@ units           metal
 boundary        p p p
 atom_style      atomic
 
-read_data       ../../Starting_Configurations/Graphene_Water_DPMD_Validation_file.lmp
+read_data       ../../../Starting_Configurations/Graphene_Water_DPMD_Validation_file.lmp
 
 mass            1 15.999000
 mass            2 1.00794

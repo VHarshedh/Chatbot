@@ -60,6 +60,24 @@ def test_analysis_agent_self_correction(mocker):
     assert res["stdout"] == "fixed"
     assert res["code_used"] == "good code"
 
+def test_analysis_agent_single_line_error_no_index_error(mocker):
+    mocker.patch("backend.agents.analysis_agent.HybridRetriever")
+    mock_resp = mocker.MagicMock()
+    mock_resp.json.side_effect = [{"response": "bad code"}, {"response": "good code"}]
+    mocker.patch("requests.post", return_value=mock_resp)
+    
+    # Single-line stderr without newline
+    mocker.patch("backend.agents.analysis_agent.run_python_in_sandbox", side_effect=[
+        {"exit_code": 1, "stdout": "", "stderr": "AttributeError: 'list' object has no attribute 'get_positions'", "artifacts": []},
+        {"exit_code": 0, "stdout": "fixed", "stderr": "", "artifacts": []}
+    ])
+    mock_web = mocker.patch("backend.agents.analysis_agent.search_web", return_value="web fix")
+    
+    agent = AnalysisAgent()
+    res = agent.run_analysis("test single line error")
+    assert res["status"] == "success"
+    assert mock_web.called
+
 def test_qa_agent_exception(mocker):
     mock_retriever = mocker.patch("backend.agents.qa_agent.HybridRetriever")
     mocker.patch("requests.post", side_effect=Exception("Network error"))

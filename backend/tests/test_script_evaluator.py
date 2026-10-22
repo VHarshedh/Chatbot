@@ -43,6 +43,12 @@ def test_gemini_evaluator_empty_code():
     assert "empty" in res["summary"].lower()
     assert len(res["critical_issues"]) >= 1
 
+    res_no_code = evaluator.evaluate("Natural language only, no python block.")
+    assert res_no_code["score"] == 0
+    assert res_no_code["verdict"] == "FAIL"
+    assert "empty" in res_no_code["summary"].lower()
+    assert len(res_no_code["critical_issues"]) >= 1
+
 
 def test_gemini_evaluator_mock_success():
     evaluator = GeminiEvaluator()
@@ -71,7 +77,8 @@ def test_gemini_evaluator_mock_success():
         ]
     }
 
-    with patch.object(evaluator, "_call_gemini_api", return_value=(mock_gemini_response, "gemini-3.5-flash-lite", None)):
+    with patch.object(evaluator, "_get_api_key", return_value="test-api-key"), \
+         patch.object(evaluator, "_call_gemini_api", return_value=(mock_gemini_response, "gemini-2.5-flash", None)):
         res = evaluator.evaluate(
             code_or_response="```python\nimport numpy as np\nx = np.random.rand(10, 3)\n```",
             prompt="Analyze water trajectory",
@@ -82,8 +89,10 @@ def test_gemini_evaluator_mock_success():
         assert res["grade"] == "F"
         assert res["verdict"] == "FAIL"
         assert "Fake mock data" in res["critical_issues"][0]
-        assert res["model"] == "gemini-3.5-flash-lite"
+        assert res["model"] == "gemini-2.5-flash"
         assert res["category_scores"]["execution_integrity"] == 5
+        assert res["passed_checks"] == ["Clean headless matplotlib usage."]
+        assert "Fake mock data: Simulated random coordinates instead of reading trajectory." in res["failed_checks"]
 
 
 def test_script_evaluator_delegation():
@@ -106,7 +115,8 @@ def test_script_evaluator_delegation():
         "recommendations": []
     }
 
-    with patch.object(evaluator._gemini_evaluator, "_call_gemini_api", return_value=(mock_gemini_response, "gemini-3.5-flash-lite", None)):
+    with patch.object(evaluator._gemini_evaluator, "_get_api_key", return_value="test-api-key"), \
+         patch.object(evaluator._gemini_evaluator, "_call_gemini_api", return_value=(mock_gemini_response, "gemini-2.5-flash", None)):
         res = evaluator.evaluate(
             raw_response="```python\nimport numpy as np\nprint('Pass')\n```",
             prompt="Run full analysis"
@@ -114,3 +124,5 @@ def test_script_evaluator_delegation():
         assert res["score"] == 92
         assert res["grade"] == "A"
         assert res["verdict"] == "PASS"
+        assert res["passed_checks"] == ["Excellent vectorized PBC handling"]
+        assert res["failed_checks"] == []

@@ -138,7 +138,8 @@ Output the executable Python script in a ```python ... ``` block:"""
             
             # Optional: Use web search if the error is tricky
             if "AttributeError" in result['stderr'] or "ImportError" in result['stderr']:
-                search_query = result['stderr'].split('\n')[-2] # roughly the error line
+                err_lines = [line.strip() for line in result["stderr"].splitlines() if line.strip()]
+                search_query = err_lines[-1] if err_lines else "Python ASE AttributeError"
                 web_context = search_web(f"Python {search_query} solution", max_results=2)
             else:
                 web_context = "No additional web context retrieved."

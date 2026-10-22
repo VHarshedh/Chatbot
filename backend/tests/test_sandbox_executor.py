@@ -39,3 +39,32 @@ def test_sandbox_executor_run_python_exception(mocker):
     res = executor.run_python_script("print('hi')")
     assert res["exit_code"] == -1
     assert "Docker run failed" in res["stderr"]
+
+def test_sandbox_executor_cleans_container_on_timeout(mocker):
+    mock_docker = mocker.patch("docker.from_env")
+    mock_client = mocker.MagicMock()
+    mock_docker.return_value = mock_client
+    
+    mock_container = mocker.MagicMock()
+    mock_container.wait.side_effect = Exception("ReadTimeout")
+    mock_client.containers.run.return_value = mock_container
+    
+    executor = SandboxExecutor()
+    res = executor.run_python_script("print('timeout')")
+    
+    assert res["exit_code"] == -1
+    mock_container.remove.assert_called_once_with(force=True)
+
+def test_sandbox_executor_removes_workspace_dir(mocker):
+    mock_docker = mocker.patch("docker.from_env")
+    mock_client = mocker.MagicMock()
+    mock_docker.return_value = mock_client
+    mock_container = mocker.MagicMock()
+    mock_container.wait.return_value = {"StatusCode": 0}
+    mock_container.logs.return_value = b""
+    mock_client.containers.run.return_value = mock_container
+    
+    mock_rmtree = mocker.patch("shutil.rmtree")
+    executor = SandboxExecutor()
+    executor.run_python_script("print('done')")
+    mock_rmtree.assert_called_once()

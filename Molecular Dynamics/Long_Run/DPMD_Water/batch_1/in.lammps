@@ -10,7 +10,7 @@ neighbor        2.0 bin
 
 neigh_modify    every 10 delay 0 check no
 
-read_data       ../../Starting_Configurations/Water_DPMD_Validation.lmp
+read_data       ../../../Starting_Configurations/Water_DPMD_Validation.lmp
 
 mass            1 2.014
 mass            2 15.999

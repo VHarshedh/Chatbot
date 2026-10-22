@@ -66,6 +66,118 @@ const confirmModalOk = document.getElementById("confirm-modal-ok");
 const confirmModalIconBadge = document.getElementById("confirm-modal-icon-badge");
 let confirmActionCallback = null;
 
+// Multimodal Image Attachment & Lightbox Elements
+let attachedImages = []; // Array of { name, dataUrl }
+
+const attachImageBtn = document.getElementById("attach-image-btn");
+const imageUploadInput = document.getElementById("image-upload-input");
+const attachedImagesPreview = document.getElementById("attached-images-preview");
+const inputContainer = document.getElementById("input-container");
+const lightboxModal = document.getElementById("lightbox-modal");
+const lightboxBackdrop = document.getElementById("lightbox-backdrop");
+const lightboxImg = document.getElementById("lightbox-img");
+const lightboxCloseBtn = document.getElementById("lightbox-close-btn");
+
+function openLightbox(src) {
+  if (!lightboxModal || !lightboxImg) return;
+  lightboxImg.src = src;
+  lightboxModal.classList.add("active");
+  lightboxModal.setAttribute("aria-hidden", "false");
+  if (lightboxBackdrop) {
+    lightboxBackdrop.classList.add("active");
+    lightboxBackdrop.setAttribute("aria-hidden", "false");
+  }
+}
+
+function closeLightbox() {
+  if (!lightboxModal || !lightboxImg) return;
+  lightboxModal.classList.remove("active");
+  lightboxModal.setAttribute("aria-hidden", "true");
+  if (lightboxBackdrop) {
+    lightboxBackdrop.classList.remove("active");
+    lightboxBackdrop.setAttribute("aria-hidden", "true");
+  }
+  lightboxImg.src = "";
+}
+
+function handleFilesSelected(files) {
+  if (!files || files.length === 0) return;
+  Array.from(files).forEach((file) => {
+    if (!file.type.startsWith("image/")) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      attachedImages.push({ name: file.name, dataUrl: ev.target.result });
+      renderAttachedImagesPreview();
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function renderAttachedImagesPreview() {
+  if (!attachedImagesPreview) return;
+  if (attachedImages.length === 0) {
+    attachedImagesPreview.style.display = "none";
+    attachedImagesPreview.innerHTML = "";
+    return;
+  }
+  attachedImagesPreview.style.display = "flex";
+  attachedImagesPreview.innerHTML = attachedImages
+    .map((img, idx) => `
+      <div class="attached-image-chip">
+        <img src="${img.dataUrl}" class="attached-image-thumb" alt="${escapeHtml(img.name)}">
+        <span class="attached-image-name">${escapeHtml(img.name)}</span>
+        <button type="button" class="attached-image-remove" data-idx="${idx}" aria-label="Remove image">&times;</button>
+      </div>
+    `)
+    .join("");
+  attachedImagesPreview.querySelectorAll(".attached-image-remove").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      attachedImages.splice(Number(btn.dataset.idx), 1);
+      renderAttachedImagesPreview();
+    });
+  });
+}
+
+attachImageBtn?.addEventListener("click", () => imageUploadInput?.click());
+imageUploadInput?.addEventListener("change", (e) => {
+  handleFilesSelected(e.target.files);
+  imageUploadInput.value = "";
+});
+promptInput?.addEventListener("paste", (e) => {
+  if (e.clipboardData?.files?.length) {
+    handleFilesSelected(e.clipboardData.files);
+  }
+});
+
+if (inputContainer) {
+  inputContainer.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    inputContainer.classList.add("drag-over");
+  });
+  inputContainer.addEventListener("dragleave", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    inputContainer.classList.remove("drag-over");
+  });
+  inputContainer.addEventListener("drop", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    inputContainer.classList.remove("drag-over");
+    if (e.dataTransfer?.files?.length) {
+      handleFilesSelected(e.dataTransfer.files);
+    }
+  });
+}
+
+lightboxCloseBtn?.addEventListener("click", closeLightbox);
+lightboxBackdrop?.addEventListener("click", closeLightbox);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && lightboxModal?.classList.contains("active")) {
+    closeLightbox();
+  }
+});
+
 // ─── Toast Notification System ───────────────────────────────────────────────
 function showToast(message, type = "info", duration = 3000) {
   const container = document.getElementById("toast-container");
@@ -888,7 +1000,7 @@ function createGeminiReportCardElement(evalData, codeText = "", userPrompt = "")
   const score = evalData.score !== undefined ? Math.round(evalData.score) : 0;
   const grade = evalData.grade || (score >= 80 ? "A" : (score >= 60 ? "B" : (score >= 40 ? "C" : (score >= 20 ? "D" : "F"))));
   const verdict = evalData.verdict || (score < 50 ? "FAIL" : (score < 80 ? "BORDERLINE" : "PASS"));
-  const modelName = evalData.model || evalData.evaluator_model || "gemini-3.5-flash-lite";
+  const modelName = evalData.model || evalData.evaluator_model || "gemini-2.5-flash";
   const latency = evalData.latency_seconds ? `${Number(evalData.latency_seconds).toFixed(1)}s` : "";
 
   const scoreClass = score >= 80 ? "score-pass" : (score >= 50 ? "score-borderline" : "score-fail");
@@ -1218,7 +1330,8 @@ async function switchSession(sessionId) {
         timestamp: msg.timestamp,
         agent_used: msg.agent_used,
         model: msg.model_name,
-        tool_calls_json: msg.tool_calls_json
+        tool_calls_json: msg.tool_calls_json,
+        images_json: msg.images_json
       });
     });
     scrollToBottom();
@@ -1314,14 +1427,17 @@ function renderAgentTraceStep(container, stepEvent) {
 chatForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const text = promptInput.value.trim();
-  if (!text) return;
+  if (!text && attachedImages.length === 0) return;
+  const imagesToSend = attachedImages.map((i) => i.dataUrl);
 
   promptInput.value = "";
   promptInput.style.height = "auto";
   localStorage.removeItem("scicompute_draft");
   welcomeHero.style.display = "none";
 
-  appendMessage("user", text);
+  appendMessage("user", text, { images: imagesToSend });
+  attachedImages = [];
+  renderAttachedImagesPreview();
   scrollToBottom();
 
   const isAgentic = (currentEngineMode === "agentic");
@@ -1384,7 +1500,8 @@ chatForm.addEventListener("submit", async (e) => {
       body: JSON.stringify({
         message: text,
         session_id: currentSessionId,
-        mode: isAgentic ? "agentic" : "single_shot"
+        mode: isAgentic ? "agentic" : "single_shot",
+        ...(imagesToSend.length > 0 ? { images: imagesToSend } : {})
       })
     });
 
@@ -1449,6 +1566,23 @@ chatForm.addEventListener("submit", async (e) => {
             if (cursor) cursor.style.display = isCodeUnclosed ? "none" : "inline-block";
             contentContainer.innerHTML = renderMarkdown(contentAccumulated, true);
             scrollToBottom(false);
+          } else if (event.type === "artifacts" && Array.isArray(event.artifacts)) {
+            const gallery = document.createElement("div");
+            gallery.className = "message-images-grid";
+            event.artifacts.forEach((fileName) => {
+              if (/\.(png|jpg|jpeg|svg|webp)$/i.test(fileName)) {
+                const wrap = document.createElement("div");
+                wrap.className = "message-image-item";
+                const imgSrc = `/public/${encodeURIComponent(fileName)}?t=${Date.now()}`;
+                wrap.innerHTML = `<img src="${imgSrc}" alt="${escapeHtml(fileName)}" title="${escapeHtml(fileName)}">`;
+                wrap.addEventListener("click", () => openLightbox(imgSrc));
+                gallery.appendChild(wrap);
+              }
+            });
+            if (gallery.children.length > 0) {
+              bubble.insertBefore(gallery, cursor);
+              scrollToBottom(false);
+            }
           } else if (event.type === "done") {
             clearInterval(timerInterval);
             if (cursor) cursor.remove();
@@ -1527,6 +1661,38 @@ function appendMessage(role, content, meta = {}) {
   const contentDiv = document.createElement("div");
   contentDiv.innerHTML = renderMarkdown(content);
   bubble.appendChild(contentDiv);
+
+  // If this message has attached images (either live array or stored images_json), render image gallery
+  let imgsToRender = [];
+  if (meta.images && Array.isArray(meta.images)) {
+    imgsToRender = meta.images;
+  } else if (meta.images_json) {
+    try {
+      const parsed = typeof meta.images_json === "string" ? JSON.parse(meta.images_json) : meta.images_json;
+      if (Array.isArray(parsed)) imgsToRender = parsed;
+    } catch (e) {
+      console.warn("Error parsing images_json:", e);
+    }
+  }
+
+  if (imgsToRender.length > 0) {
+    const gallery = document.createElement("div");
+    gallery.className = "message-images-grid";
+    imgsToRender.forEach((imgSrc) => {
+      const wrap = document.createElement("div");
+      wrap.className = "message-image-item";
+      wrap.innerHTML = `<img src="${imgSrc}" alt="Attached image" loading="lazy">`;
+      wrap.addEventListener("click", () => openLightbox(imgSrc));
+      gallery.appendChild(wrap);
+    });
+    bubble.appendChild(gallery);
+  }
+
+  // Attach lightbox click handlers to all image items or markdown images
+  bubble.querySelectorAll(".message-image-item img, .markdown-body img").forEach((img) => {
+    img.style.cursor = "pointer";
+    img.addEventListener("click", () => openLightbox(img.src));
+  });
 
   if (role === "assistant") {
     attachGeminiEvaluateButton(bubble, content, meta.prompt || getLastUserPrompt(), currentSessionId);

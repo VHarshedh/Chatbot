@@ -6,7 +6,7 @@ from backend.tools.sandbox_tools import run_python_in_sandbox
 def test_live_qa_agent():
     # This will hit the actual Ollama instance
     agent = QAAgent()
-    ans = agent.answer_question("What is Quantum ESPRESSO?")
+    ans = agent.answer("What is Quantum ESPRESSO?")
     assert len(ans) > 10
 
 @pytest.mark.skip(reason="Integration tests require live Docker")

@@ -188,7 +188,7 @@ def test_generate_response_with_docker_execution_molecular(mocker):
     mock_attach = mocker.patch("backend.notebooks.attach_to_notebook.attach_script_to_notebook")
 
     agent = SingleShotAgent()
-    res = agent.generate_response("Calculate energy of anatase tio2 water molecular extxyz")
+    res = agent.generate_response("Calculate energy of anatase tio2 water molecular extxyz", run_sandbox=True)
 
     assert res["status"] == "success"
     assert mock_sandbox.called
@@ -197,6 +197,27 @@ def test_generate_response_with_docker_execution_molecular(mocker):
     assert "Success (Exit Code 0)" in res["response"]
     # Molecular extxyz should NOT attach to notebook
     assert not mock_attach.called
+
+def test_generate_response_default_zero_shot_isolation(mocker):
+    # Verify default run_sandbox=False does NOT trigger sandbox execution
+    mock_resp = mocker.MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "response": "Here is the code:\n```python\nimport numpy as np\nprint('Computed RDF')\n```",
+        "total_duration": 1000000,
+        "eval_count": 40
+    }
+    mocker.patch("requests.post", return_value=mock_resp)
+    mock_sandbox = mocker.patch("backend.tools.sandbox_tools.run_python_in_sandbox")
+    mock_attach = mocker.patch("backend.notebooks.attach_to_notebook.attach_script_to_notebook")
+
+    agent = SingleShotAgent()
+    res = agent.generate_response("Compute RDF for anatase tio2")
+
+    assert res["status"] == "success"
+    assert not mock_sandbox.called
+    assert not mock_attach.called
+    assert "Secure Docker Sandbox Execution" not in res["response"]
 
 def test_generate_response_with_docker_execution_standard(mocker):
     # Mock LLM returning Python code for anatase tio2 alone
@@ -220,7 +241,7 @@ def test_generate_response_with_docker_execution_standard(mocker):
     })
 
     agent = SingleShotAgent()
-    res = agent.generate_response("Compute RDF for anatase tio2")
+    res = agent.generate_response("Compute RDF for anatase tio2", run_sandbox=True)
 
     assert res["status"] == "success"
     assert mock_sandbox.called

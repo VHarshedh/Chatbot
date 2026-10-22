@@ -15,6 +15,9 @@ def test_is_execution_request():
     assert agent._is_execution_request("Simulate interfacial water with deepmd model") is True
     assert agent._is_execution_request("Plot the radial distribution function rdf") is True
     assert agent._is_execution_request("What is the coordination number of Ir in IrO2?") is False
+    assert agent._is_execution_request("Explain the mathematical definition of survival probability P(t) and radial distribution function") is False
+    assert agent._is_execution_request("What is the survival probability of water on TiO2?") is False
+    assert agent._is_execution_request("Define radial distribution function") is False
 
 def test_chat_stream_non_execution(mocker):
     mock_retriever = mocker.patch("backend.agents.agentic_agent.HybridRetriever")
@@ -122,6 +125,46 @@ def test_chat_stream_execution_failure_and_web_correction(mocker):
     assert "web_complete" in steps
     assert "sandbox_complete" in steps
     assert mock_web.called
+    content_deltas = [p.get("delta", "") for p in parsed if p.get("type") == "content"]
+    assert any("Self-Corrected Script" in d for d in content_deltas)
+
+def test_chat_stream_retry_and_fix_unfenced_code(mocker):
+    mocker.patch("backend.agents.agentic_agent.HybridRetriever")
+    mocker.patch("backend.agents.agentic_agent.insert_session", return_value=44)
+    mocker.patch("backend.agents.agentic_agent.insert_message")
+
+    # Step 2 generates bad code
+    mock_codegen_res = MagicMock()
+    mock_codegen_res.iter_lines.return_value = [
+        json.dumps({"message": {"content": "```python\nbad_code()\n```"}}).encode("utf-8")
+    ]
+    # Step 2 fix returns raw unfenced code
+    mock_fix_res = MagicMock()
+    mock_fix_res.json.return_value = {
+        "message": {"content": "import numpy as np\nfixed_code()\n"}
+    }
+    mock_stream_res = MagicMock()
+    mock_stream_res.iter_lines.return_value = [
+        json.dumps({"message": {"content": "Fixed code completed."}}).encode("utf-8")
+    ]
+
+    mocker.patch.object(AgenticRAGAgent, "_call_llm", side_effect=[mock_codegen_res, mock_fix_res, mock_stream_res])
+    mock_sandbox = mocker.patch("backend.agents.agentic_agent.run_python_in_sandbox", side_effect=[
+        {"exit_code": 1, "stdout": "", "stderr": "NameError: name 'bad_code' is not defined", "artifacts": []},
+        {"exit_code": 0, "stdout": "Success", "stderr": "", "artifacts": []}
+    ])
+    mocker.patch("backend.agents.agentic_agent.search_web", return_value="Fix info")
+
+    agent = AgenticRAGAgent()
+    events = list(agent.chat_stream("Execute code block for density profile"))
+
+    parsed = [json.loads(e.replace("data: ", "").strip()) for e in events if e.strip()]
+    content_deltas = [p.get("delta", "") for p in parsed if p.get("type") == "content"]
+    assert any("Self-Corrected Script" in d for d in content_deltas)
+    # Ensure second sandbox call received the fixed candidate
+    assert mock_sandbox.call_count == 2
+    second_call_code = mock_sandbox.call_args_list[1][0][0]
+    assert "fixed_code()" in second_call_code
 
 def test_chat_stream_rag_exception(mocker):
     mock_retriever = mocker.patch("backend.agents.agentic_agent.HybridRetriever")

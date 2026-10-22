@@ -17,28 +17,37 @@ def _get_data_mount_path(text: str) -> Optional[str]:
         return str(cand)
     return None
 
-DEFAULT_SYSTEM_PROMPT = (
-    "SYSTEM DIRECTIVE: You are SciCompute AI, an expert computational materials scientist and simulation engineer "
-    "powered by Gemma 4 with E2B sandbox capabilities.\n"
-    "\n"
-    "CORE OPERATIONAL RULES:\n"
-    "1. Direct Execution: Get straight to the point and do not beat around the bush. Provide clear, concise, and scientifically "
-    "rigorous answers with zero conversational fluff, pleasantries, or preamble.\n"
-    "2. E2B Sandbox Code Generation & ASE Syntax:\n"
-    "   - When generating Python scripts for simulation or analysis (ASE, NumPy, SciPy, Matplotlib, DeePMD, LAMMPS), "
-    "write complete, self-contained, syntactically correct executable code in a single ```python ... ``` block.\n"
-    "   - Ground all data loading on real file paths (assume trajectory files are located at `/mnt/data/` or relative path `public/`). "
-    "Never use hallucinated or synthetic data markers.\n"
-    "   - CRITICAL ASE SYNTAX: `read(path, index=':')` returns a Python list of Atoms (`list[ase.Atoms]`). "
-    "A Python `list` has NO `.get_positions()` or `.cell` attributes! Always unpack or index the Atoms instance: "
-    "`traj = read(path, index=':'); atoms = traj[0] if isinstance(traj, list) else traj; positions = atoms.get_positions()`. "
-    "Alternatively, read a single Atoms object: `atoms = read(path, index=0)`.\n"
-    "   - Coordinate Filtering & Boundary Layer Analysis: Never compare continuous coordinates using exact float equality (`==`) like `pos[:, 2] == z_min`, as this reduces full atomic planes to 1 or 2 isolated points. For slab surfaces along z, apply a layer thickness tolerance window `tol` (0.5 to 1.0 Å): `pos[:, 2] <= (z_min + tol)` or `pos[:, 2] >= (z_max - tol)`. For 3D cell boundaries, evaluate fractional coordinates `atoms.get_scaled_positions(wrap=True)` within a skin depth (e.g. 0.02 to 0.05).\n"
-    "   - Headless Visualization: Always save figures as PNG files (`plt.savefig(filename, dpi=300, bbox_inches='tight')`) and "
-    "call `plt.close()`. Never invoke `plt.show()`.\n"
-    "   - Interfacial Analysis: For neighbor lists, site classification, and coordination numbers, use `ase.neighborlist` (`neighbor_list` or `NeighborList`).\n"
-    "3. Scientific Rigor: Use standard LaTeX formatting ($...$ for inline, $$...$$ for display blocks) for mathematical and physical expressions."
-)
+DEFAULT_SYSTEM_PROMPT = """You are SciCompute AI, a principal computational materials scientist and scientific Python engineer specialized in ASE (Atomic Simulation Environment), Quantum ESPRESSO (DFT), DeePMD-kit, and LAMMPS.
+
+<thinking_protocol>
+Keep internal reasoning concise and structured (under 150 words):
+1. Identify the target physical system, chemical stoichiometry, units (Å, eV, Ry, ps, ns, g/cm³), and required output files.
+2. Verify data structures (e.g., `ase.io.read(path, index=':')` returns `list[Atoms]`; `ase.io.read(path, index=0)` returns `Atoms`).
+3. Verify boundary conditions (3D periodic minimum image convention `mic=True`, slab z-layer tolerance windows).
+4. Write complete, vectorized, self-contained code with zero placeholders or mock data.
+</thinking_protocol>
+
+<scientific_coding_standards>
+1. Direct Output: Begin immediately with the technical solution or executable code block. Omit conversational greetings, disclaimers, and filler.
+2. Canonical ASE & NumPy Idioms:
+   - Trajectory Loading:
+     `traj = read(path, index=':')`
+     `frames = traj if isinstance(traj, list) else [traj]`
+     `atoms0 = frames[0]`
+   - Slab Surface Layer Selection (along z-normal):
+     Identify topmost surface metal atoms using a physical layer tolerance window (`1.5` Å):
+     `m_z_max = positions[metal_mask, 2].max()`
+     `m_sur_indices = np.where(metal_mask & (positions[:, 2] >= m_z_max - 1.5))[0]`
+   - Neighbor Search & Minimum Image Convention:
+     Use `from ase.neighborlist import neighbor_list` with explicit pair cutoffs, e.g.:
+     `i_idx, j_idx, dists = neighbor_list('ijd', frame, cutoff={('O', 'H'): 1.2}, self_interaction=False)`
+   - Numerical Integration Compatibility (NumPy 1.x & 2.x):
+     `trapz_fn = getattr(np, 'trapezoid', getattr(np, 'trapz', None))`
+3. Headless Plotting Contract:
+   - Save every figure via `plt.savefig(filename, dpi=300, bbox_inches='tight')` followed immediately by `plt.close()`. Never call `plt.show()`.
+4. Mathematical Typography:
+   - Format inline physical variables with `$ ... $` and display equations with `$$ ... $$`.
+</scientific_coding_standards>"""
 
 class SingleShotAgent:
     """
@@ -70,7 +79,8 @@ class SingleShotAgent:
         prompt: str,
         system_prompt: Optional[str] = None,
         images: Optional[List[str]] = None,
-        history: Optional[List[Dict[str, Any]]] = None
+        history: Optional[List[Dict[str, Any]]] = None,
+        run_sandbox: bool = False
     ) -> Dict[str, Any]:
         """
         Directly queries the Ollama /api/chat endpoint with conversation history.
@@ -102,9 +112,12 @@ class SingleShotAgent:
             "messages": messages,
             "stream": True,
             "options": {
-                "num_ctx": settings.NUM_CTX,
-                "num_predict": -1,
-                "temperature": 0.2,
+                "num_ctx": settings.NUM_CTX,       # 8192 tokens
+                "num_predict": 4096,               # Cap generation at 4096 tokens to prevent runaway loops
+                "temperature": 0.15,               # Low temperature for deterministic syntax & math
+                "top_p": 0.90,                     # Nucleus sampling cutoff
+                "top_k": 40,                       # Standard Gemma 4 top-k filter
+                "repeat_penalty": 1.05,            # Mild penalty to prevent comment/code loop repetition
                 "num_gpu": settings.NUM_GPU
             }
         }
@@ -161,9 +174,10 @@ class SingleShotAgent:
             content = "".join(content_parts).strip()
             latency = round(time.time() - start_time, 3)
 
-            # Execute script in isolated Docker sandbox if Python code block is present
+            execution_exit_code = None
+            # Execute script in isolated Docker sandbox if Python code block is present and sandbox execution is requested
             code_match = re.search(r"```(?:python)?\s*([\s\S]*?)```", content)
-            if code_match:
+            if run_sandbox and code_match:
                 extracted = code_match.group(1).strip()
                 if extracted and len(extracted.splitlines()) >= 3:
                     try:
@@ -174,6 +188,7 @@ class SingleShotAgent:
                         sb_res = run_python_in_sandbox(extracted, data_mount_path=data_mount)
                         
                         exit_code = sb_res.get("exit_code", 1)
+                        execution_exit_code = exit_code
                         stdout = sb_res.get("stdout", "").strip()
                         stderr = sb_res.get("stderr", "").strip()
                         artifacts = sb_res.get("artifacts", [])
@@ -220,6 +235,7 @@ class SingleShotAgent:
 
             return {
                 "status": "success",
+                "memory_quality": {"execution_required": bool(code_match), "exit_code": execution_exit_code},
                 "response": final_text,
                 "thinking": thinking,
                 "content": content,
@@ -251,7 +267,8 @@ class SingleShotAgent:
         user_message: str,
         session_id: Optional[int] = None,
         system_prompt: Optional[str] = None,
-        images: Optional[List[str]] = None
+        images: Optional[List[str]] = None,
+        run_sandbox: bool = False
     ) -> Dict[str, Any]:
         """
         Processes a chat turn, tracks session history in SQLite, and returns the response.
@@ -274,7 +291,7 @@ class SingleShotAgent:
         )
 
         # Generate response grounded on chat history
-        result = self.generate_response(user_message, system_prompt=system_prompt, images=images, history=history)
+        result = self.generate_response(user_message, system_prompt=system_prompt, images=images, history=history, run_sandbox=run_sandbox)
 
         # Log assistant message
         if result["status"] == "success":
@@ -282,7 +299,8 @@ class SingleShotAgent:
                 session_id=session_id,
                 role="assistant",
                 content=result["response"],
-                agent_used="SingleShotAgent"
+                agent_used="SingleShotAgent",
+                tool_calls_json=json.dumps({"memory_quality": result.get("memory_quality", {})})
             )
 
             try:
@@ -291,7 +309,8 @@ class SingleShotAgent:
                     session_id=session_id,
                     user_message=user_message,
                     assistant_message=result["response"],
-                    agent_used="SingleShotAgent"
+                    agent_used="SingleShotAgent",
+                    **result.get("memory_quality", {})
                 )
             except Exception:
                 pass
@@ -305,7 +324,8 @@ class SingleShotAgent:
         user_message: str,
         session_id: Optional[int] = None,
         system_prompt: Optional[str] = None,
-        images: Optional[List[str]] = None
+        images: Optional[List[str]] = None,
+        run_sandbox: bool = False
     ):
         """
         Streams a chat response token-by-token via Server-Sent Events (SSE) format: data: {...}\n\n
@@ -353,13 +373,17 @@ class SingleShotAgent:
             "messages": messages,
             "stream": True,
             "options": {
-                "num_ctx": settings.NUM_CTX,
-                "num_predict": -1,
-                "temperature": 0.2,
+                "num_ctx": settings.NUM_CTX,       # 8192 tokens
+                "num_predict": 4096,               # Cap generation at 4096 tokens to prevent runaway loops
+                "temperature": 0.15,               # Low temperature for deterministic syntax & math
+                "top_p": 0.90,                     # Nucleus sampling cutoff
+                "top_k": 40,                       # Standard Gemma 4 top-k filter
+                "repeat_penalty": 1.05,            # Mild penalty to prevent comment/code loop repetition
                 "num_gpu": settings.NUM_GPU
             }
         }
 
+        execution_exit_code = None
         thinking_parts = []
         content_parts = []
         eval_count = 0
@@ -421,10 +445,10 @@ class SingleShotAgent:
             thinking = "".join(thinking_parts).strip()
             content = "".join(content_parts).strip()
 
-            # Execute script in isolated Docker sandbox if Python code block is present
+            # Execute script in isolated Docker sandbox if Python code block is present and sandbox execution is requested
             code_match = re.search(r"```(?:python)?\s*([\s\S]*?)```", content)
             notebook_info = None
-            if code_match:
+            if run_sandbox and code_match:
                 extracted = code_match.group(1).strip()
                 if extracted and len(extracted.splitlines()) >= 3:
                     try:
@@ -435,6 +459,7 @@ class SingleShotAgent:
                         sb_res = run_python_in_sandbox(extracted, data_mount_path=data_mount)
                         
                         exit_code = sb_res.get("exit_code", 1)
+                        execution_exit_code = exit_code
                         stdout = sb_res.get("stdout", "").strip()
                         stderr = sb_res.get("stderr", "").strip()
                         artifacts = sb_res.get("artifacts", [])
@@ -492,7 +517,8 @@ class SingleShotAgent:
                 session_id=session_id,
                 role="assistant",
                 content=final_text,
-                agent_used="SingleShotAgent"
+                agent_used="SingleShotAgent",
+                tool_calls_json=json.dumps({"memory_quality": {"execution_required": bool(run_sandbox and code_match), "exit_code": execution_exit_code}})
             )
 
             try:
@@ -501,7 +527,8 @@ class SingleShotAgent:
                     session_id=session_id,
                     user_message=user_message,
                     assistant_message=final_text,
-                    agent_used="SingleShotAgent"
+                    agent_used="SingleShotAgent",
+                    execution_required=bool(run_sandbox and code_match), exit_code=execution_exit_code
                 )
             except Exception:
                 pass

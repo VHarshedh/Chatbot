@@ -28,7 +28,8 @@ def memory_db(tmp_path):
     CREATE TABLE IF NOT EXISTS sessions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         title TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_message_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""")
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS messages (
@@ -77,6 +78,15 @@ def test_insert_message(memory_db):
     assert res[0]["role"] == "user"
     assert res[0]["content"] == "Hello DB"
     assert res[0]["agent_used"] == "QAAgent"
+
+def test_insert_message_updates_last_message_at(memory_db):
+    session_id = insert_session("Test Session")
+    sess_before = execute_query("SELECT last_message_at FROM sessions WHERE id = ?", (session_id,))
+    assert sess_before[0]["last_message_at"] is not None
+
+    insert_message(session_id, "user", "Hello again")
+    sess_after = execute_query("SELECT last_message_at FROM sessions WHERE id = ?", (session_id,))
+    assert sess_after[0]["last_message_at"] is not None
 
 def test_insert_and_get_evaluations(memory_db):
     eval_id = insert_evaluation(

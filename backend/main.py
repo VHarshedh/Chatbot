@@ -34,6 +34,20 @@ from backend.notebooks.attach_to_notebook import (
     resolve_prompt_context
 )
 
+def _index_evaluated_memory(session_id, prompt, response, evaluation):
+    if session_id is None or evaluation.get("score", 0) < 80:
+        return
+    try:
+        from backend.rag.chat_memory import get_chat_memory_store
+        get_chat_memory_store().index_turn(
+            session_id=session_id, user_message=prompt, assistant_message=response,
+            agent_used="SingleShotAgent", execution_required=True,
+            evaluation_score=evaluation["score"],
+        )
+    except Exception as exc:
+        print(f"Notice: Could not index evaluated memory: {exc}")
+
+
 app = FastAPI(title="Scientific Computing Chatbox API", version="1.0.0")
 
 # Setup frontend directory (located at root ChatBot/frontend)
@@ -184,7 +198,7 @@ def chat_endpoint(request: ChatRequest):
 
     raw_text = request.message.strip() if has_text else "Please analyze this attached scientific image / structure for materials science insights."
     user_msg = raw_text
-    if request.include_notebook_context is not False:
+    if request.mode not in ["agentic", "agentic_rag"] and request.include_notebook_context is not False:
         try:
             nb_name = request.notebook_name or "running.ipynb"
             nb_path = str(Path(__file__).parent / "notebooks" / nb_name)
@@ -217,7 +231,7 @@ def chat_stream_endpoint(request: ChatRequest):
 
     raw_text = request.message.strip() if has_text else "Please analyze this attached scientific image / structure for materials science insights."
     user_msg = raw_text
-    if request.include_notebook_context is not False:
+    if request.mode not in ["agentic", "agentic_rag"] and request.include_notebook_context is not False:
         try:
             nb_name = request.notebook_name or "running.ipynb"
             nb_path = str(Path(__file__).parent / "notebooks" / nb_name)
@@ -280,15 +294,21 @@ def evaluate_zero_shot_stream_endpoint(request: EvaluationRequest):
     full_prompt = f"{nb_prompt_prefix}{base_prompt}" if nb_prompt_prefix else base_prompt
 
     agent = SingleShotAgent()
-    system_prompt = (
-        "SYSTEM DIRECTIVE: You are an expert computational materials scientist and Python developer "
-        "powered by Gemma 4 with E2B sandbox capabilities.\n"
-        "You are generating a script to be attached directly to the user's Jupyter notebook `running.ipynb`.\n"
-        "1. Grounding & Lineage: Ground your script strictly on the pre-loaded variables, trajectory files, and environment of `running.ipynb`.\n"
-        "2. ASE Syntax & Execution: Use ASE, NumPy, SciPy, and Matplotlib. In ASE, `read(path, index=':')` returns a list (`list[Atoms]`); always unpack `atoms = traj[0] if isinstance(traj, list) else traj` before accessing `.get_positions()`. For headless plots, save PNG files (`plt.savefig(..., dpi=300, bbox_inches='tight')`) and call `plt.close()`.\n"
-        "3. Output Contract: Get straight to the point and do not beat around the bush. Provide no conversational fluff or preamble. "
-        "Output ONLY the complete, working, syntactically correct Python code block."
-    )
+    system_prompt = """You are an expert computational materials scientist and Python developer generating a complete, peer-review-grade analysis script for `running.ipynb`.
+
+<thinking_protocol>
+Think efficiently in 4 brief steps (maximum 120 words):
+1. Map all required variables (`traj`, `traj_file`, `system_name`, or multi-model paths).
+2. Confirm exact physical cutoffs: surface metal `z >= max(m_z) - 1.5` Å, bulk oxygen stoichiometry `s * N_metal`, CUS/adsorbed water distance `<= 2.5` Å, O-H covalent bond `<= 1.2` Å.
+3. Verify formulas for z-mass density (g/cm³), pair RDFs g(r), continuous survival probability P(t), and trapezoidal residence time tau.
+4. Ensure all required `.npz`, `.png`, and `.txt` artifacts are written to disk.
+</thinking_protocol>
+
+<execution_contract>
+1. Use ONLY standard pre-installed scientific libraries: `ase`, `numpy`, `scipy`, `matplotlib`, `os`, `time`. Do NOT import `pwtools`.
+2. Handle both pre-loaded notebook memory (`traj`) and multi-model directory loops (`range(1, dp + 1)`) gracefully so the script executes without error in both Colab (`running.ipynb`) and standalone Docker containers.
+3. Output ONLY a single, complete, syntactically valid ```python ... ``` code block with zero prose before or after.
+</execution_contract>"""
 
     def stream_generator():
         stream = agent.chat_stream(
@@ -320,27 +340,35 @@ def evaluate_zero_shot_stream_endpoint(request: EvaluationRequest):
         # Evaluate the completed script
         if full_response_text:
             evaluator = ScriptEvaluator()
-            evaluation = evaluator.evaluate(full_response_text, prompt=base_prompt, notebook_context=nb_context)
-
-            eval_id = insert_evaluation(
-                session_id=session_id,
-                model_name=settings.MODEL_NAME,
+            evaluation = evaluator.evaluate(
+                full_response_text,
                 prompt=base_prompt,
-                generated_code=evaluation["extracted_code"],
-                score=evaluation.get("score", 0),
-                grade=evaluation.get("grade", "F"),
-                category_scores_json=json.dumps(evaluation.get("category_scores", {})),
-                evaluation_report_json=json.dumps({
-                    "passed_checks": evaluation.get("passed_checks", evaluation.get("strengths", [])),
-                    "failed_checks": evaluation.get("failed_checks", evaluation.get("critical_issues", [])),
-                    "summary": evaluation.get("summary", ""),
-                    "verdict": evaluation.get("verdict", ""),
-                    "critical_issues": evaluation.get("critical_issues", []),
-                    "strengths": evaluation.get("strengths", []),
-                    "recommendations": evaluation.get("recommendations", [])
-                }),
-                latency_seconds=latency_seconds
-            ) if not evaluation.get("evaluation_id") else evaluation.get("evaluation_id")
+                notebook_context=nb_context,
+                session_id=session_id
+            )
+            _index_evaluated_memory(session_id, full_prompt, full_response_text, evaluation)
+
+            eval_id = evaluation.get("evaluation_id")
+            if not eval_id:
+                eval_id = insert_evaluation(
+                    session_id=session_id,
+                    model_name=evaluation.get("model", settings.MODEL_NAME),
+                    prompt=base_prompt,
+                    generated_code=evaluation.get("extracted_code", ""),
+                    score=evaluation.get("score", 0),
+                    grade=evaluation.get("grade", "F"),
+                    category_scores_json=json.dumps(evaluation.get("category_scores", {})),
+                    evaluation_report_json=json.dumps({
+                        "passed_checks": evaluation.get("passed_checks", evaluation.get("strengths", [])),
+                        "failed_checks": evaluation.get("failed_checks", evaluation.get("critical_issues", [])),
+                        "summary": evaluation.get("summary", ""),
+                        "verdict": evaluation.get("verdict", ""),
+                        "critical_issues": evaluation.get("critical_issues", []),
+                        "strengths": evaluation.get("strengths", []),
+                        "recommendations": evaluation.get("recommendations", [])
+                    }),
+                    latency_seconds=latency_seconds
+                )
 
             notebook_attach_result = None
             if evaluation.get("extracted_code"):
@@ -348,7 +376,7 @@ def evaluate_zero_shot_stream_endpoint(request: EvaluationRequest):
                 if not is_anatase_water_molecular_prompt(base_prompt):
                     try:
                         notebook_attach_result = attach_script_to_notebook(
-                            code=evaluation["extracted_code"],
+                            code=evaluation.get("extracted_code", ""),
                             notebook_path=str(nb_path),
                             replace_placeholder=True
                         )
@@ -439,6 +467,7 @@ def evaluate_zero_shot_endpoint(request: EvaluationRequest):
     raw_response = chat_res.get("response", "")
     evaluator = ScriptEvaluator()
     evaluation = evaluator.evaluate(raw_response, prompt=base_prompt, notebook_context=nb_context, session_id=chat_res["session_id"])
+    _index_evaluated_memory(chat_res["session_id"], full_prompt, raw_response, evaluation)
 
     eval_id = evaluation.get("evaluation_id")
     if not eval_id:

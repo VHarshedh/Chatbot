@@ -25,6 +25,12 @@ def test_generate_qe_scf_input_nbnd(sample_structure):
     out = generate_qe_scf_input(sample_structure, 50.0, [2,2,2], {}, nbnd=100)
     assert "nbnd = 100" in out
 
+def test_generate_qe_scf_input_cell_parameters(sample_structure):
+    sample_structure["cell"] = [[3.94, 0.0, 0.0], [0.0, 3.94, 0.0], [0.0, 0.0, 3.94]]
+    out = generate_qe_scf_input(sample_structure, 50.0, [2,2,2], {})
+    assert "CELL_PARAMETERS (angstrom)" in out
+    assert "3.94000000 0.00000000 0.00000000" in out
+
 def test_create_convergence_sweep(mocker):
     mocker.patch("backend.tools.dft_tools.parse_cif", return_value={"chemical_symbols": ["Pt"], "elements": ["Pt"], "positions": [[0,0,0]]})
     mocker.patch("pathlib.Path.mkdir")

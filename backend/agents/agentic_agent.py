@@ -77,14 +77,16 @@ class AgenticRAGAgent:
         self.retriever = HybridRetriever()
 
     def _is_execution_request(self, text: str) -> bool:
-        """Determines if the user query asks to write and run code or perform simulation analysis"""
+        """Determines if the user query asks to write/run code or execute a simulation analysis"""
         lower = text.lower()
+        explicit_code = bool(re.search(r"\b(python|script|code|run|execute|plot|simulate|compute|calculate)\b", lower))
+        pure_question = bool(re.match(r"^\s*(what\s+is|explain|define|how\s+does)\b", lower)) and not explicit_code
+        if pure_question:
+            return False
         patterns = [
-            r"\b(run|execute|compute|calculate|simulate|plot)\b",
+            r"\b(run|execute|compute|calculate|simulate|plot|write)\b",
             r"\b(python script|code block|simulation script)\b",
-            r"\b(density profile|radial distribution|rdf|survival probability)\b",
-            r"\b(extxyz|trajectory|deepmd model|lammps)\b",
-            r"\b(docker|container|graph|containment|anatase|ti02|tio2)\b"
+            r"\b(docker|container|sandbox)\b"
         ]
         return any(re.search(p, lower) for p in patterns)
 
@@ -135,9 +137,12 @@ class AgenticRAGAgent:
             "messages": messages,
             "stream": stream,
             "options": {
-                "num_ctx": settings.NUM_CTX,
-                "num_predict": -1,
-                "temperature": 0.2,
+                "num_ctx": settings.NUM_CTX,       # 8192 tokens
+                "num_predict": 4096,               # Cap generation at 4096 tokens to prevent runaway loops
+                "temperature": 0.15,               # Low temperature for deterministic syntax & math
+                "top_p": 0.90,                     # Nucleus sampling cutoff
+                "top_k": 40,                       # Standard Gemma 4 top-k filter
+                "repeat_penalty": 1.05,            # Mild penalty to prevent comment/code loop repetition
                 "num_gpu": settings.NUM_GPU
             }
         }
@@ -194,6 +199,8 @@ class AgenticRAGAgent:
                 anaphoric_words = ["it", "its", "this", "these", "that", "those", "same", "previous", "earlier", "above"]
                 if any(w in user_message.lower().split() for w in anaphoric_words) and last_user_msg:
                     retrieval_query = f"{last_user_msg}\n{user_message}"
+            from backend.rag.query_rewriting import expand_query
+            retrieval_query = expand_query(retrieval_query)
             context = str(self.retriever.retrieve(retrieval_query, current_session_id=session_id))
             rag_snippet = context[:400] + ("..." if len(context) > 400 else "")
             rag_step = {"type": "agent_step", "step": "rag_complete", "title": "Hybrid RAG Retrieval", "status": "completed", "details": rag_snippet}
@@ -205,6 +212,7 @@ class AgenticRAGAgent:
             yield f"data: {json.dumps(rag_err)}\n\n"
 
         # Step 2: Check for execution request (Sandbox + Web Search)
+        execution_exit_code = None
         execution_requested = self._is_execution_request(user_message)
         sandbox_output = ""
         artifacts = []
@@ -229,13 +237,6 @@ class AgenticRAGAgent:
             yield f"data: {json.dumps(cg_start)}\n\n"
 
             nb_context_section = ""
-            if not is_mol:
-                try:
-                    nb_ctx = extract_notebook_context()
-                    nb_context_section = f"{format_notebook_context_prompt(nb_ctx)}\n\n"
-                except Exception:
-                    pass
-
             data_mount_path = None
             data_mount_inst = ""
             from pathlib import Path
@@ -371,6 +372,7 @@ CRITICAL IMPLEMENTATION REQUIREMENTS:
                 yield f"data: {json.dumps(sb_start)}\n\n"
                 
                 sandbox_res = run_python_in_sandbox(code_extracted, data_mount_path=data_mount_path)
+                execution_exit_code = sandbox_res.get("exit_code")
                 if sandbox_res["exit_code"] == 0:
                     sandbox_output = sandbox_res["stdout"]
                     artifacts = sandbox_res.get("artifacts", [])
@@ -412,9 +414,20 @@ Write the corrected Python code block only."""
                         system_prompt=AGENTIC_FIX_SYSTEM_PROMPT,
                         timeout=3600
                     )
-                    fixed_code_match = re.search(r"```(?:python)?\s*([\s\S]*?)```", fix_res.json().get("message", {}).get("content", ""))
+                    fix_raw = fix_res.json().get("message", {}).get("content", "") if hasattr(fix_res, "json") else ""
+                    fixed_code_match = re.search(r"```(?:python)?\s*([\s\S]*?)```", fix_raw)
                     if fixed_code_match:
-                        code_extracted = fixed_code_match.group(1).strip()
+                        fixed_candidate = fixed_code_match.group(1).strip()
+                    else:
+                        from backend.evaluation.gemini_evaluator import GeminiEvaluator
+                        extracted_fallback = GeminiEvaluator.extract_python_code(fix_raw)
+                        fixed_candidate = extracted_fallback.strip() if extracted_fallback else fix_raw.strip()
+
+                    if fixed_candidate:
+                        code_extracted = fixed_candidate
+                        fix_delta = f"\n\n### 🔧 Self-Corrected Script\n```python\n{code_extracted}\n```\n"
+                        content_parts.append(fix_delta)
+                        yield f"data: {json.dumps({'type': 'content', 'delta': fix_delta})}\n\n"
                         if not is_mol:
                             try:
                                 attach_script_to_notebook(code_extracted)
@@ -429,6 +442,7 @@ Write the corrected Python code block only."""
                     if artifacts:
                         yield f"data: {json.dumps({'type': 'artifacts', 'artifacts': artifact_names, 'artifact_paths': artifacts})}\n\n"
                     retry_exit = retry_res.get("exit_code", 1)
+                    execution_exit_code = retry_exit
                     re_details = f"Self-correction finished (Exit {retry_exit})."
                     if artifact_names:
                         re_details += f" | Generated: {', '.join(artifact_names)}"
@@ -516,6 +530,9 @@ Get straight to the point and do not beat around the bush. Eliminate pleasantrie
             latency = round(time.time() - start_time, 3)
             thinking = "".join(thinking_parts).strip()
             content = "".join(content_parts).strip()
+            if execution_exit_code == 0 and code_extracted:
+                # Persist the tested script instead of a failed pre-retry draft.
+                content = re.sub(r"```(?:python)?\s*[\s\S]*?```", lambda _: "```python\n" + code_extracted + "\n```", content, count=1)
 
             syn_done = {"type": "agent_step", "step": "synthesis_complete", "title": "Agentic Synthesis", "status": "completed", "details": f"Synthesized response ({len(content.split())} words)."}
             trace_steps.append(syn_done)
@@ -535,7 +552,7 @@ Get straight to the point and do not beat around the bush. Eliminate pleasantrie
                 role="assistant",
                 content=final_text,
                 agent_used="AgenticRAG",
-                tool_calls_json=json.dumps(trace_steps)
+                tool_calls_json=json.dumps(trace_steps + [{"memory_quality": {"execution_required": execution_requested or bool(re.search(r"```", final_text)), "exit_code": execution_exit_code}}])
             )
 
             try:
@@ -544,7 +561,9 @@ Get straight to the point and do not beat around the bush. Eliminate pleasantrie
                     session_id=session_id,
                     user_message=user_message,
                     assistant_message=final_text,
-                    agent_used="AgenticRAG"
+                    agent_used="AgenticRAG",
+                    execution_required=execution_requested or bool(re.search(r"```", final_text)),
+                    exit_code=execution_exit_code
                 )
             except Exception:
                 pass

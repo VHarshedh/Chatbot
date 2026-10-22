@@ -35,11 +35,10 @@ class OllamaEmbeddings:
                 )
                 if response.status_code == 200:
                     data = response.json()
-                    if "embeddings" in data:
+                    if "embeddings" in data and len(data["embeddings"]) == len(batch):
                         embeddings.extend(data["embeddings"])
                         continue
-                    elif "embedding" in data:
-                        # Handles single item / mock return
+                    elif "embedding" in data and len(batch) == 1:
                         embeddings.append(data["embedding"])
                         continue
                 elif response.status_code == 404:
@@ -54,6 +53,8 @@ class OllamaEmbeddings:
                     f"Could not connect to Ollama at {self.base_url}.\n"
                     f"Please make sure Ollama is running ('ollama serve')."
                 )
+            except RuntimeError:
+                raise
             except Exception:
                 pass
 

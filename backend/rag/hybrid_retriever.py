@@ -1,86 +1,156 @@
-from typing import Optional
+import re
+from typing import Optional, List, Dict, Any
 from backend.rag.vectorstore import VectorStore
 from backend.rag.knowledge_graph import KnowledgeGraph
 from backend.rag.chat_memory import get_chat_memory_store
+from backend.notebooks.attach_to_notebook import (
+    is_anatase_water_molecular_prompt,
+    is_anatase_tio2_prompt,
+)
 
 class HybridRetriever:
+    _vs_instance: Optional[VectorStore] = None
+    _kg_instance: Optional[KnowledgeGraph] = None
+
     def __init__(self):
-        self.vector_store = VectorStore()
-        self.kg = KnowledgeGraph()
+        if HybridRetriever._vs_instance is None:
+            HybridRetriever._vs_instance = VectorStore()
+        if HybridRetriever._kg_instance is None:
+            HybridRetriever._kg_instance = KnowledgeGraph.get_instance()
+        self.vector_store = HybridRetriever._vs_instance
+        self.kg = HybridRetriever._kg_instance
         self.chat_memory = get_chat_memory_store()
-        
-    def retrieve(self, query: str, current_session_id: Optional[int] = None) -> str:
-        # 1. Semantic search across notebook cells and repository documents
-        vs_results = self.vector_store.semantic_search(query, n_results=6)
-        
-        # 2. Extract potential entities and domain relationships from query
-        kg_context = ""
+
+    @staticmethod
+    def _detect_domain_filter(query: str) -> Optional[Dict[str, Any]]:
+        q = query.lower()
+        if any(w in q for w in ["ecutwfc", "ecutrho", "kpoints", "k-point", "pw.in", "quantum espresso", "pseudopotential"]):
+            return {"domain": "DFT"}
+        if any(w in q for w in ["in.lammps", "read_restart", "write_restart", "fix 1 all nvt", "submit_from.sh"]):
+            return {"domain": "Molecular Dynamics"}
+        if any(w in q for w in ["coord.raw", "box.raw", "raw_to_set", "se_e2_a", "start_pref_e", "lcurve.out"]):
+            return {"domain": "DeepMD Training"}
+        if any(w in q for w in ["survival probability", "cus", "o_adb", "o_br", "hydroxyl", "residence time", "simulation_results.npz"]):
+            return {"domain": "Interfacial Analysis"}
+        return None
+
+    @staticmethod
+    def _compress_chunk(content: str, max_chars: int = 1400) -> str:
+        """Strips verbose decorative comment banners from notebook cells to save context window tokens."""
+        lines = []
+        for line in content.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#" * 10):
+                continue
+            lines.append(line)
+        cleaned = "\n".join(lines).strip()
+        return cleaned[:max_chars] + ("\n# ... [truncated]" if len(cleaned) > max_chars else "")
+
+    def retrieve(self, query: str, current_session_id: Optional[int] = None, max_chunks: int = 4) -> str:
         q_lower = query.lower()
+        is_mol = is_anatase_water_molecular_prompt(query)
+
+        # 1. Structured Knowledge Graph & Domain Facts
+        kg_facts: List[str] = []
         if "pt" in q_lower or "platinum" in q_lower:
-            res = self.kg.graph_query("MATCH (m:Material {symbol: 'Pt'})-[:has_pseudo]->(p:Pseudopotential) RETURN p.filename")
+            res = self.kg.graph_query(
+                "MATCH (m:Material {symbol: 'Pt'})-[:has_pseudo]->(p:Pseudopotential) RETURN p.filename, p.type, p.xc"
+            )
             if res:
-                kg_context += f"Knowledge Graph fact: The recommended pseudopotential for Pt is {res[0][0]}.\n"
-                
+                kg_facts.append(
+                    f"- Platinum (Pt) DFT Pseudopotential: `{res[0][0]}` (Type: {res[0][1]}, Functional: {res[0][2]}, recommended `ecutwfc = 60-100` Ry, `ecutrho = 4 * ecutwfc`)."
+                )
+
         if "water" in q_lower or "h2o" in q_lower:
             res = self.kg.graph_query("MATCH (s:System {name: 'Water'}) RETURN s.type_map, s.temp")
             if res:
-                kg_context += f"Knowledge Graph fact: The Water system uses type_map {res[0][0]} and temperature {res[0][1]}K.\n"
+                kg_facts.append(
+                    f"- DeePMD Water System: `type_map = {res[0][0]}` (0-indexed in `type.raw`), target temperature = `{res[0][1]} K`, timestep `dt = 0.0005` ps."
+                )
 
-        from backend.notebooks.attach_to_notebook import is_anatase_water_molecular_prompt, is_anatase_tio2_prompt
-        is_mol = is_anatase_water_molecular_prompt(query)
-
-        if not is_mol and any(w in q_lower for w in ["density", "rdf", "survival", "interfacial", "deepmd", "dp_models", "neighbor"]):
-            kg_context += (
-                "Domain Ground Truth:\n"
-                "- Grounded target notebook: `ChatBot/backend/notebooks/running.ipynb`.\n"
-                "- Atomic neighbor analysis & surface cutoffs: MUST use `from ase.neighborlist import neighbor_list, natural_cutoffs`.\n"
-                "- Trained DeepMD potential models: located at `Training/DP_Models/DPMD_Water/1/`, `Training/DP_Models/DPMD_Water/2/`, and `Training/DP_Models/DPMD_Water/3/`.\n"
-                "- Multi-model averaging: loop over models `list(range(1, dp + 1))` to compute cross-model mean and standard deviation.\n"
+        if "iro2" in q_lower or "iridium" in q_lower:
+            res = self.kg.graph_query(
+                "MATCH (m:Material {symbol: 'Ir'})-[:part_of]->(s:System) RETURN m.name, s.name, s.type_map, s.temp"
             )
+            if res:
+                kg_facts.append(
+                    f"- {res[0][0]} System `{res[0][1]}`: type_map = {res[0][2]}, simulation temp = {res[0][3]} K."
+                )
+
+        if "tio2" in q_lower or "titanium" in q_lower or "anatase" in q_lower:
+            res = self.kg.graph_query(
+                "MATCH (m:Material {symbol: 'Ti'})-[:part_of]->(s:System) RETURN m.name, s.name, s.type_map, s.temp"
+            )
+            if res:
+                kg_facts.append(
+                    f"- {res[0][0]} System `{res[0][1]}`: type_map = {res[0][2]}, simulation temp = {res[0][3]} K."
+                )
 
         if is_mol:
-            # File data must NOT be sent; notebook data must NOT be sent; only provide file location
-            kg_context += (
-                "Knowledge Graph Fact: Anatase TiO2 Molecular Water Trajectory File:\n"
-                "- File Location: `ChatBot/public/Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz` (Mounted read-only in Docker sandbox at `/mnt/data/Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz`).\n"
-                "- CRITICAL ASE SYNTAX: `read(path, index=':')` returns a Python list of Atoms (`list[ase.Atoms]`). "
-                "You MUST unpack the frame (`atoms = traj[0] if isinstance(traj, list) else traj`) before calling `atoms.get_positions()`. A list has no `.get_positions()` attribute.\n"
-                "- Physics & Chemistry: Anatase TiO2 slab with molecularly adsorbed water. The z-axis is the surface normal. "
-                "Features 5-fold coordinated Ti (Ti_5c CUS), bridging oxygens (O_br), and adsorbed water. Use `ase.neighborlist` for interfacial site cutoffs.\n"
-                "- Boundary Extraction: Never compare float coordinates with `==`. For slab boundaries along z, use layer tolerance `tol = 0.8` Å (`z <= z_min + tol` or `z >= z_max - tol`). For box boundaries, use fractional coordinates `scaled = atoms.get_scaled_positions(wrap=True)`.\n"
-            )
-        elif is_anatase_tio2_prompt(query):
-            kg_context += (
-                "Knowledge Graph Fact: Anatase TiO2 Interface Notebook:\n"
-                "- Grounded target notebook: `ChatBot/backend/notebooks/running.ipynb`.\n"
-            )
-                
-        # 3. Cross-Session Chat Memory RAG Retrieval
-        chat_memory_context = ""
+            kg_facts.extend([
+                "- Trajectory File Path: `/mnt/data/Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz` (or `ChatBot/public/Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz`).",
+                "- ASE Trajectory Unpacking: `traj = read(path, index=':'); atoms = traj[0] if isinstance(traj, list) else traj`.",
+                "- Surface Layer Selection: Use tolerance window `tol = 0.8` Å (`pos[:, 2] <= z_min + tol` or `pos[:, 2] >= z_max - tol`), never float `==`.",
+                "- Coordination & Cutoffs: Use `from ase.neighborlist import neighbor_list, natural_cutoffs`."
+            ])
+        elif any(w in q_lower for w in ["density", "rdf", "survival", "interfacial", "cus", "o_adb", "hydroxyl"]):
+            kg_facts.extend([
+                "- Surface Metal Identification (`M_sur`): `z >= max(m_z) - 1.5` Å.",
+                "- Bulk vs Water Oxygen Separation: Sort O atoms by z; lowest `s * len(m_z)` are `O_bulk` (`s=2` for IrO2/TiO2); remaining are `O_w`.",
+                "- CUS & Adsorbed Water (`M_cus`, `O_adb`): `atoms.get_distance(i, j, mic=True) <= 2.5` Å between `M_sur` and `O_w`.",
+                "- Surface Bridge Oxygen (`O_sur` / `O_br`): `o_z[s * len(m_z) - len(m_cus_index) : s * len(m_z)]`.",
+                "- Mass Density Formula (g/cm³): `((count / 6.023e23) * 18.01528) / (volume * 1e-24)` where `volume = cell[0][0] * cell[1][1] * bin_width`.",
+                "- Hydroxylation Classification: `neighbor_list('ijd', frame, {('O', 'H'): 1.2}, self_interaction=False)` -> 1 H neighbor = Dissociated (`OH`/`OD`), 2 H neighbors = Molecular (`H2O`/`D2O`).",
+                "- Continuous Survival Probability `P(t)`: `len(set.intersection(*oh_sets[j:j+tau+1])) / len(oh_sets[j])`, integrated via `np.trapezoid(surv * times, times) / np.trapezoid(surv, times)`."
+            ])
+
+        # 2. Filtered Vector Search (Skip redundant retrieval if molecular extxyz isolation rule applies)
+        selected_chunks: List[str] = []
+        if not is_mol:
+            domain_filter = self._detect_domain_filter(query)
+            vs_results = self.vector_store.semantic_search(query, n_results=max_chunks * 2, filter=domain_filter)
+            if not vs_results and domain_filter is not None:
+                vs_results = self.vector_store.semantic_search(query, n_results=max_chunks * 2)
+
+            seen_prefixes = set()
+            for res in vs_results:
+                content = res.get("content", "").strip()
+                # Skip comment-only overview cells when executable code cells exist
+                if "OVERVIEW:" in content and "import " not in content and len(selected_chunks) >= 1:
+                    continue
+                prefix_sig = content[:120]
+                if prefix_sig in seen_prefixes:
+                    continue
+                seen_prefixes.add(prefix_sig)
+                selected_chunks.append(self._compress_chunk(content))
+                if len(selected_chunks) >= max_chunks:
+                    break
+
+        # 3. Cross-Session Episodic Memory (Strict distance threshold)
+        memory_block = ""
         try:
             memories = self.chat_memory.search_memory(
                 query=query,
                 n_results=2,
                 current_session_id=current_session_id,
-                max_distance=1.05
+                max_distance=0.85
             )
             if memories:
-                chat_memory_context = self.chat_memory.format_memory_context(memories)
-        except Exception as e:
-            print(f"Notice: Cross-session memory retrieval skipped: {e}")
+                memory_block = self.chat_memory.format_memory_context(memories)
+        except Exception:
+            pass
 
-        # 4. Fuse results (suppress notebook cells if molecular extxyz requested)
-        context = ""
-        if not is_mol:
-            context += "--- Vector Store Context ---\n"
-            for i, res in enumerate(vs_results):
-                context += f"Result {i+1}:\n{res['content']}\n\n"
-            
-        context += "--- Knowledge Graph & Domain Context ---\n"
-        context += kg_context
-
-        if chat_memory_context:
-            context += f"\n{chat_memory_context}\n"
-        
-        return context
-
+        # 4. Assemble Compact, High-Signal Context for Gemma 4 E2B
+        sections = ["<retrieved_context>"]
+        if kg_facts:
+            sections.append("  <domain_ground_truth>\n    " + "\n    ".join(kg_facts) + "\n  </domain_ground_truth>")
+        if selected_chunks:
+            formatted_chunks = "\n\n".join(
+                f"  <reference_chunk index=\"{i+1}\">\n{chunk}\n  </reference_chunk>"
+                for i, chunk in enumerate(selected_chunks)
+            )
+            sections.append(formatted_chunks)
+        if memory_block:
+            sections.append(f"  <episodic_memory>\n{memory_block}\n  </episodic_memory>")
+        sections.append("</retrieved_context>")
+        return "\n".join(sections)
