@@ -157,11 +157,22 @@ class SandboxExecutor:
                 exit_code = -1
 
         # Retrieve any plots/artifacts generated in workspace_dir
+        public_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "public"))
+        os.makedirs(public_dir, exist_ok=True)
+
         generated_files = []
         for root, dirs, files in os.walk(workspace_dir):
             for file in files:
-                if file != "script.py":
-                    generated_files.append(os.path.join(root, file))
+                # Exclude execution script and internal matplotlib cache files
+                if file == "script.py" or file.startswith("fontlist") or file.endswith(".cache"):
+                    continue
+                src_path = os.path.join(root, file)
+                try:
+                    dst_path = os.path.join(public_dir, file)
+                    shutil.copy2(src_path, dst_path)
+                    generated_files.append(dst_path)
+                except Exception:
+                    generated_files.append(src_path)
 
         return {
             "stdout": logs if exit_code == 0 else "",

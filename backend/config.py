@@ -23,4 +23,8 @@ class Settings(BaseSettings):
     # Override with NUM_CTX environment variable if needed.
     NUM_CTX: int = int(os.getenv("NUM_CTX", "8192"))
 
+    # Gemini Evaluation Settings
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
+
 settings = Settings()

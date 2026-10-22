@@ -11,6 +11,7 @@ import uuid
 from backend.agents.baseline_agent import SingleShotAgent
 from backend.agents.agentic_agent import AgenticRAGAgent
 from backend.evaluation.script_evaluator import ScriptEvaluator
+from backend.evaluation.gemini_evaluator import GeminiEvaluator
 from backend.db.models import (
     execute_query,
     insert_session,
@@ -61,6 +62,12 @@ class EvaluationRequest(BaseModel):
     prompt: Optional[str] = None
     notebook_name: Optional[str] = "running.ipynb"
     include_notebook_context: Optional[bool] = True
+
+class GeminiEvaluationRequest(BaseModel):
+    code: str
+    prompt: Optional[str] = None
+    execution_output: Optional[str] = None
+    session_id: Optional[int] = None
 
 class NotebookAttachRequest(BaseModel):
     code: Optional[str] = None
@@ -235,6 +242,21 @@ def chat_stream_endpoint(request: ChatRequest):
         }
     )
 
+@app.post("/api/evaluate/gemini")
+def evaluate_gemini_endpoint(request: GeminiEvaluationRequest):
+    """
+    Evaluates generated Python code using Gemini 3.8 Flash with extreme prejudice.
+    Strict scoring: incorrect output or failing code is ruled around 20%.
+    """
+    evaluator = GeminiEvaluator()
+    result = evaluator.evaluate(
+        code_or_response=request.code,
+        prompt=request.prompt,
+        execution_output=request.execution_output,
+        session_id=request.session_id
+    )
+    return result
+
 @app.post("/api/evaluate_zero_shot/stream")
 def evaluate_zero_shot_stream_endpoint(request: EvaluationRequest):
     """
@@ -305,16 +327,20 @@ def evaluate_zero_shot_stream_endpoint(request: EvaluationRequest):
                 model_name=settings.MODEL_NAME,
                 prompt=base_prompt,
                 generated_code=evaluation["extracted_code"],
-                score=evaluation["score"],
-                grade=evaluation["grade"],
-                category_scores_json=json.dumps(evaluation["category_scores"]),
+                score=evaluation.get("score", 0),
+                grade=evaluation.get("grade", "F"),
+                category_scores_json=json.dumps(evaluation.get("category_scores", {})),
                 evaluation_report_json=json.dumps({
-                    "passed_checks": evaluation["passed_checks"],
-                    "failed_checks": evaluation["failed_checks"],
-                    "summary": evaluation["summary"]
+                    "passed_checks": evaluation.get("passed_checks", evaluation.get("strengths", [])),
+                    "failed_checks": evaluation.get("failed_checks", evaluation.get("critical_issues", [])),
+                    "summary": evaluation.get("summary", ""),
+                    "verdict": evaluation.get("verdict", ""),
+                    "critical_issues": evaluation.get("critical_issues", []),
+                    "strengths": evaluation.get("strengths", []),
+                    "recommendations": evaluation.get("recommendations", [])
                 }),
                 latency_seconds=latency_seconds
-            )
+            ) if not evaluation.get("evaluation_id") else evaluation.get("evaluation_id")
 
             notebook_attach_result = None
             if evaluation.get("extracted_code"):
@@ -333,17 +359,21 @@ def evaluate_zero_shot_stream_endpoint(request: EvaluationRequest):
                 "type": "eval_complete",
                 "evaluation_id": eval_id,
                 "session_id": session_id,
-                "model": settings.MODEL_NAME,
+                "model": evaluation.get("model", settings.MODEL_NAME),
                 "prompt": base_prompt,
-                "generated_code": evaluation["extracted_code"],
+                "generated_code": evaluation.get("extracted_code", ""),
                 "raw_response": full_response_text,
-                "score": evaluation["score"],
-                "grade": evaluation["grade"],
-                "category_scores": evaluation["category_scores"],
-                "passed_checks": evaluation["passed_checks"],
-                "failed_checks": evaluation["failed_checks"],
-                "summary": evaluation["summary"],
-                "evaluation_type": evaluation.get("evaluation_type", "rag_benchmark"),
+                "score": evaluation.get("score", 0),
+                "grade": evaluation.get("grade", "F"),
+                "verdict": evaluation.get("verdict", ""),
+                "category_scores": evaluation.get("category_scores", {}),
+                "critical_issues": evaluation.get("critical_issues", []),
+                "strengths": evaluation.get("strengths", []),
+                "recommendations": evaluation.get("recommendations", []),
+                "passed_checks": evaluation.get("passed_checks", evaluation.get("strengths", [])),
+                "failed_checks": evaluation.get("failed_checks", evaluation.get("critical_issues", [])),
+                "summary": evaluation.get("summary", ""),
+                "evaluation_type": evaluation.get("evaluation_type", "gemini_strict"),
                 "domain": evaluation.get("domain"),
                 "latency_seconds": latency_seconds,
                 "notebook_attached": notebook_attach_result,
@@ -408,23 +438,29 @@ def evaluate_zero_shot_endpoint(request: EvaluationRequest):
 
     raw_response = chat_res.get("response", "")
     evaluator = ScriptEvaluator()
-    evaluation = evaluator.evaluate(raw_response, prompt=base_prompt, notebook_context=nb_context)
+    evaluation = evaluator.evaluate(raw_response, prompt=base_prompt, notebook_context=nb_context, session_id=chat_res["session_id"])
 
-    eval_id = insert_evaluation(
-        session_id=chat_res["session_id"],
-        model_name=settings.MODEL_NAME,
-        prompt=base_prompt,
-        generated_code=evaluation["extracted_code"],
-        score=evaluation["score"],
-        grade=evaluation["grade"],
-        category_scores_json=json.dumps(evaluation["category_scores"]),
-        evaluation_report_json=json.dumps({
-            "passed_checks": evaluation["passed_checks"],
-            "failed_checks": evaluation["failed_checks"],
-            "summary": evaluation["summary"]
-        }),
-        latency_seconds=chat_res.get("latency_seconds", 0.0)
-    )
+    eval_id = evaluation.get("evaluation_id")
+    if not eval_id:
+        eval_id = insert_evaluation(
+            session_id=chat_res["session_id"],
+            model_name=evaluation.get("model", settings.MODEL_NAME),
+            prompt=base_prompt,
+            generated_code=evaluation.get("extracted_code", ""),
+            score=evaluation.get("score", 0),
+            grade=evaluation.get("grade", "F"),
+            category_scores_json=json.dumps(evaluation.get("category_scores", {})),
+            evaluation_report_json=json.dumps({
+                "passed_checks": evaluation.get("passed_checks", evaluation.get("strengths", [])),
+                "failed_checks": evaluation.get("failed_checks", evaluation.get("critical_issues", [])),
+                "summary": evaluation.get("summary", ""),
+                "verdict": evaluation.get("verdict", ""),
+                "critical_issues": evaluation.get("critical_issues", []),
+                "strengths": evaluation.get("strengths", []),
+                "recommendations": evaluation.get("recommendations", [])
+            }),
+            latency_seconds=chat_res.get("latency_seconds", 0.0)
+        )
 
     notebook_attach_result = None
     if evaluation.get("extracted_code"):
@@ -443,16 +479,21 @@ def evaluate_zero_shot_endpoint(request: EvaluationRequest):
         "status": "success",
         "evaluation_id": eval_id,
         "session_id": chat_res["session_id"],
-        "model": settings.MODEL_NAME,
+        "model": evaluation.get("model", settings.MODEL_NAME),
         "prompt": base_prompt,
-        "generated_code": evaluation["extracted_code"],
+        "generated_code": evaluation.get("extracted_code", ""),
         "raw_response": raw_response,
-        "score": evaluation["score"],
-        "grade": evaluation["grade"],
-        "category_scores": evaluation["category_scores"],
-        "passed_checks": evaluation["passed_checks"],
-        "failed_checks": evaluation["failed_checks"],
-        "summary": evaluation["summary"],
+        "score": evaluation.get("score", 0),
+        "grade": evaluation.get("grade", "F"),
+        "verdict": evaluation.get("verdict", ""),
+        "category_scores": evaluation.get("category_scores", {}),
+        "critical_issues": evaluation.get("critical_issues", []),
+        "strengths": evaluation.get("strengths", []),
+        "recommendations": evaluation.get("recommendations", []),
+        "passed_checks": evaluation.get("passed_checks", evaluation.get("strengths", [])),
+        "failed_checks": evaluation.get("failed_checks", evaluation.get("critical_issues", [])),
+        "summary": evaluation.get("summary", ""),
+        "evaluation_type": evaluation.get("evaluation_type", "gemini_strict"),
         "latency_seconds": chat_res.get("latency_seconds", 0.0),
         "notebook_attached": notebook_attach_result,
         "notebook_context": nb_context
@@ -521,7 +562,13 @@ def list_evaluations():
                 item["passed_checks"] = rep.get("passed_checks", [])
                 item["failed_checks"] = rep.get("failed_checks", [])
                 item["summary"] = rep.get("summary", "")
-                item["evaluation_type"] = rep.get("evaluation_type", "rag_benchmark")
+                item["verdict"] = rep.get("verdict", "")
+                item["execution_status"] = rep.get("execution_status", "")
+                item["critical_issues"] = rep.get("critical_issues", [])
+                item["strengths"] = rep.get("strengths", [])
+                item["recommendations"] = rep.get("recommendations", [])
+                item["evaluator_model"] = rep.get("evaluator_model", item.get("model_name"))
+                item["evaluation_type"] = rep.get("evaluation_type", "gemini_strict" if "verdict" in rep else "rag_benchmark")
                 item["domain"] = rep.get("domain")
             except Exception:
                 item["evaluation_report"] = {}

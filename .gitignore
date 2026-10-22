@@ -53,3 +53,4 @@ convergence_sweep/
 out/
 tmp/
 scratch/
+.env

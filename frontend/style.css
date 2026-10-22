@@ -3623,3 +3623,413 @@ button:focus-visible, a:focus-visible {
   body { background: #fff; color: #000; }
   .message-bubble { box-shadow: none; border: 1px solid #ddd; }
 }
+
+/* =============================================================================
+   Gemini 3.5 Flash Lite Code Evaluation Styles
+   ============================================================================= */
+
+.gemini-eval-action-container {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.12);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+[data-theme="light"] .gemini-eval-action-container {
+  border-top-color: rgba(0, 0, 0, 0.1);
+}
+
+.gemini-eval-btn-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.btn-gemini-eval {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #f1f5f9;
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.22), rgba(168, 85, 247, 0.26));
+  border: 1px solid rgba(139, 92, 246, 0.45);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.18);
+  font-family: inherit;
+  user-select: none;
+}
+
+.btn-gemini-eval:hover:not(:disabled) {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.4), rgba(168, 85, 247, 0.45));
+  border-color: rgba(168, 85, 247, 0.7);
+  box-shadow: 0 4px 16px rgba(139, 92, 246, 0.35);
+  transform: translateY(-1px);
+  color: #ffffff;
+}
+
+.btn-gemini-eval:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.btn-gemini-eval:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn-gemini-eval svg {
+  color: #a78bfa;
+  flex-shrink: 0;
+  transition: transform 0.25s ease;
+}
+
+.btn-gemini-eval:hover:not(:disabled) svg {
+  transform: rotate(15deg) scale(1.1);
+  color: #c4b5fd;
+}
+
+.btn-gemini-eval.is-loading svg {
+  animation: spin 1s linear infinite;
+}
+
+.gemini-eval-hint {
+  font-size: 0.75rem;
+  color: var(--text-muted, #94a3b8);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Gemini Evaluation Card */
+.gemini-eval-card {
+  margin-top: 10px;
+  background: radial-gradient(circle at top left, rgba(30, 27, 75, 0.45), rgba(15, 23, 42, 0.75));
+  border: 1px solid rgba(139, 92, 246, 0.35);
+  border-radius: 12px;
+  padding: 16px 18px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  animation: fadeInSlideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  backdrop-filter: blur(8px);
+}
+
+[data-theme="light"] .gemini-eval-card {
+  background: #ffffff;
+  border-color: rgba(139, 92, 246, 0.3);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
+}
+
+@keyframes fadeInSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Header & Score */
+.gemini-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="light"] .gemini-card-header {
+  border-bottom-color: rgba(0, 0, 0, 0.06);
+}
+
+.gemini-card-title-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.gemini-eval-badge-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #6366f1, #a855f7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.4);
+  flex-shrink: 0;
+}
+
+.gemini-eval-title-text h4 {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  color: #f8fafc;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+[data-theme="light"] .gemini-eval-title-text h4 {
+  color: #0f172a;
+}
+
+.gemini-eval-meta {
+  font-size: 0.71875rem;
+  color: var(--text-muted, #94a3b8);
+  margin-top: 2px;
+}
+
+/* Score Pill */
+.gemini-score-pill-container {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.gemini-score-badge {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  padding: 6px 14px;
+  border-radius: 10px;
+  font-weight: 800;
+  font-size: 1.25rem;
+  letter-spacing: -0.02em;
+}
+
+.gemini-score-badge .score-denom {
+  font-size: 0.75rem;
+  font-weight: 500;
+  opacity: 0.8;
+}
+
+.gemini-score-badge.score-fail {
+  background: rgba(239, 68, 68, 0.16);
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  color: #f87171;
+  box-shadow: 0 0 16px rgba(239, 68, 68, 0.2);
+}
+
+.gemini-score-badge.score-borderline {
+  background: rgba(245, 158, 11, 0.16);
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  color: #fbbf24;
+  box-shadow: 0 0 16px rgba(245, 158, 11, 0.2);
+}
+
+.gemini-score-badge.score-pass {
+  background: rgba(16, 185, 129, 0.16);
+  border: 1px solid rgba(16, 185, 129, 0.45);
+  color: #34d399;
+  box-shadow: 0 0 16px rgba(16, 185, 129, 0.2);
+}
+
+.gemini-verdict-tag {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+
+.gemini-verdict-tag.verdict-fail {
+  background: rgba(239, 68, 68, 0.2);
+  color: #fca5a5;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+}
+
+.gemini-verdict-tag.verdict-borderline {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fde68a;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+.gemini-verdict-tag.verdict-pass {
+  background: rgba(16, 185, 129, 0.2);
+  color: #a7f3d0;
+  border: 1px solid rgba(16, 185, 129, 0.4);
+}
+
+/* Category Grid */
+.gemini-category-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 8px;
+}
+
+.gemini-cat-card {
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+[data-theme="light"] .gemini-cat-card {
+  background: #f8fafc;
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+.gemini-cat-label {
+  font-size: 0.6875rem;
+  color: var(--text-muted, #94a3b8);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-weight: 600;
+}
+
+.gemini-cat-score {
+  font-size: 0.9375rem;
+  font-weight: 700;
+  color: #f1f5f9;
+}
+
+[data-theme="light"] .gemini-cat-score {
+  color: #0f172a;
+}
+
+.gemini-cat-bar {
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 2px;
+}
+
+[data-theme="light"] .gemini-cat-bar {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.gemini-cat-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.5s ease;
+}
+
+/* Summary Box */
+.gemini-summary-box {
+  background: rgba(0, 0, 0, 0.25);
+  border-left: 3px solid rgba(139, 92, 246, 0.6);
+  padding: 10px 12px;
+  border-radius: 0 8px 8px 0;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: #e2e8f0;
+}
+
+[data-theme="light"] .gemini-summary-box {
+  background: #f1f5f9;
+  color: #334155;
+  border-left-color: #8b5cf6;
+}
+
+/* Lists */
+.gemini-issues-section,
+.gemini-strengths-section,
+.gemini-recs-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gemini-section-header {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gemini-section-header.header-danger {
+  color: #f87171;
+}
+
+.gemini-section-header.header-success {
+  color: #34d399;
+}
+
+.gemini-section-header.header-info {
+  color: #60a5fa;
+}
+
+.gemini-detail-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.gemini-detail-list li {
+  font-size: 0.78125rem;
+  line-height: 1.45;
+  padding: 5px 8px;
+  border-radius: 6px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.gemini-issues-list li {
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  color: #fecaca;
+}
+
+[data-theme="light"] .gemini-issues-list li {
+  background: rgba(239, 68, 68, 0.06);
+  color: #991b1b;
+}
+
+.gemini-strengths-list li {
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  color: #a7f3d0;
+}
+
+[data-theme="light"] .gemini-strengths-list li {
+  background: rgba(16, 185, 129, 0.06);
+  color: #065f46;
+}
+
+.gemini-recs-list li {
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  color: #bfdbfe;
+}
+
+[data-theme="light"] .gemini-recs-list li {
+  background: rgba(59, 130, 246, 0.06);
+  color: #1e40af;
+}
+
+.gemini-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 0.71875rem;
+  color: var(--text-muted, #94a3b8);
+}
+

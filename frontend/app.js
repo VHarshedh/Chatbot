@@ -11,7 +11,6 @@ const promptInput = document.getElementById("prompt-input");
 const sessionList = document.getElementById("session-list");
 const benchmarkList = document.getElementById("benchmark-list");
 const evalHistoryList = document.getElementById("eval-history-list");
-const runFlagshipEvalBtn = document.getElementById("run-flagship-eval-btn");
 const newSessionBtn = document.getElementById("new-session-btn");
 const modelNameDisplay = document.getElementById("model-name-display");
 const toggleSidebarBtn = document.getElementById("toggle-sidebar-btn");
@@ -481,52 +480,6 @@ function setEngineMode(mode, persist = true) {
   updateSettingsDrawerModeInfo();
 }
 
-// Category Display Metadata
-const CATEGORY_META = {
-  // Flagship RAG Benchmark Categories
-  syntax_and_imports: {
-    label: "1. Syntax & Core Imports (ASE, NumPy, Matplotlib)",
-    max: 15
-  },
-  site_identification: {
-    label: "2. Interfacial Site Identification (M_sur, CUS, O_adb, O_br)",
-    max: 20
-  },
-  density_and_rdfs: {
-    label: "3. Density Profiles & Pair RDFs (z-binning, g(r))",
-    max: 20
-  },
-  kinetics_and_survival: {
-    label: "4. Surface Kinetics & Survival Probability P(t)",
-    max: 25
-  },
-  model_averaging_and_outputs: {
-    label: "5. DP Averaging, 2×2 Summary Figure & Text Report",
-    max: 20
-  },
-  // Dynamic Hybrid Evaluator Categories
-  syntax_and_safety: {
-    label: "1. Syntax Parsing & Security Isolation Audit",
-    max: 15
-  },
-  domain_implementation: {
-    label: "2. Scientific Domain Implementation & Constraints",
-    max: 30
-  },
-  runtime_execution_and_contracts: {
-    label: "3. Scope Resolution & Runtime Execution",
-    max: 25
-  },
-  scientific_rigor: {
-    label: "4. Scientific Rigor (Units, Naming, Docs, Error Handling)",
-    max: 15
-  },
-  artifacts_and_presentation: {
-    label: "5. Visualization, Figures & Persistence",
-    max: 15
-  }
-};
-
 // Initialize application
 document.addEventListener("DOMContentLoaded", async () => {
   initThemeToggle();
@@ -547,9 +500,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
 // Setup global event listeners
 function setupEventListeners() {
-  if (runFlagshipEvalBtn) {
-    runFlagshipEvalBtn.addEventListener("click", handleRunFlagshipEvaluation);
-  }
+  // Legacy evaluation button removed
   if (btnModeZeroShot) {
     btnModeZeroShot.addEventListener("click", () => setEngineMode("zero_shot"));
   }
@@ -888,175 +839,249 @@ function confirmResetPrompts() {
 }
 
 // =============================================================================
-// Zero-Shot Script Accuracy Evaluation
+// Gemini 3.8 Flash Code Evaluation Engine
 // =============================================================================
 
-async function handleRunFlagshipEvaluation() {
-  if (!runFlagshipEvalBtn) return;
+function extractCodeFromMessage(text) {
+  if (!text) return "";
+  // Check for fenced python code blocks first
+  const pyMatch = text.match(/```(?:python|py)\s*?\n([\s\S]*?)```/i);
+  if (pyMatch && pyMatch[1].trim()) return pyMatch[1].trim();
 
-  // Explicitly ensure UI is in Zero-Shot Evaluation Mode
-  setEngineMode("zero_shot", false);
+  // Check for any fenced block that contains code tokens
+  const allBlocks = Array.from(text.matchAll(/```[a-zA-Z0-9_-]*\s*?\n([\s\S]*?)```/g));
+  for (const match of allBlocks) {
+    const body = match[1].trim();
+    if (body && (body.includes("import ") || body.includes("def ") || body.includes("class ") || body.includes("plt.") || body.includes("np."))) {
+      return body;
+    }
+  }
 
-  const originalBtnHtml = runFlagshipEvalBtn.innerHTML;
-  runFlagshipEvalBtn.disabled = true;
-  runFlagshipEvalBtn.innerHTML = `
-    <span class="typing-dot" style="display:inline-block; margin-right:4px;"></span>
-    Evaluating Gemma4...
-  `;
+  // Any non-empty code block
+  const anyBlock = text.match(/```[a-zA-Z0-9_-]*\s*?\n([\s\S]*?)```/);
+  if (anyBlock && anyBlock[1].trim()) return anyBlock[1].trim();
 
-  welcomeHero.style.display = "none";
+  return "";
+}
 
-  // Live progress bubble in the chat thread with live timer & streaming code
-  const assistantItem = document.createElement("div");
-  assistantItem.className = "message-item assistant";
+function extractDockerOutputFromMessage(text) {
+  if (!text) return "";
+  const match = text.match(/### 🐳 Secure Docker Sandbox Execution[\s\S]*?(?:---|\Z)/i);
+  if (match) return match[0].trim();
+  const outMatch = text.match(/\*\*Container Output\*\*:\s*```[a-zA-Z]*\s*([\s\S]*?)```/i);
+  if (outMatch) return outMatch[1].trim();
+  return "";
+}
 
-  const bubble = document.createElement("div");
-  bubble.className = "message-bubble";
+function getLastUserPrompt() {
+  const userMessages = document.querySelectorAll(".message-item.user .message-bubble");
+  if (userMessages.length > 0) {
+    return userMessages[userMessages.length - 1].textContent.trim();
+  }
+  return "";
+}
 
-  bubble.innerHTML = `
-    <div class="stream-header-bar">
-      <span class="live-timer-badge">⏳ Starting Flagship Evaluation... 0.0s</span>
-      <span class="live-model-pill">batiai/gemma4-e2b:q4 • running.ipynb Grounded • Zero-Shot</span>
-    </div>
-    <details class="thinking-details" style="display:none;" open>
-      <summary class="thinking-summary">
-        <div class="thinking-summary-left">
-          <span class="thinking-summary-icon">🧠</span>
-          <span class="thinking-summary-title">Thinking Process</span>
-          <span class="thinking-summary-count"><span class="thinking-word-count">0</span> words</span>
+function createGeminiReportCardElement(evalData, codeText = "", userPrompt = "") {
+  const card = document.createElement("div");
+  card.className = "gemini-eval-card";
+
+  const score = evalData.score !== undefined ? Math.round(evalData.score) : 0;
+  const grade = evalData.grade || (score >= 80 ? "A" : (score >= 60 ? "B" : (score >= 40 ? "C" : (score >= 20 ? "D" : "F"))));
+  const verdict = evalData.verdict || (score < 50 ? "FAIL" : (score < 80 ? "BORDERLINE" : "PASS"));
+  const modelName = evalData.model || evalData.evaluator_model || "gemini-3.5-flash-lite";
+  const latency = evalData.latency_seconds ? `${Number(evalData.latency_seconds).toFixed(1)}s` : "";
+
+  const scoreClass = score >= 80 ? "score-pass" : (score >= 50 ? "score-borderline" : "score-fail");
+  const verdictClass = score >= 80 ? "verdict-pass" : (score >= 50 ? "verdict-borderline" : "verdict-fail");
+
+  const catScores = evalData.category_scores || {};
+  const execScore = catScores.execution_integrity !== undefined ? catScores.execution_integrity : (score < 25 ? Math.min(score, 5) : Math.round(score * 0.25));
+  const sciScore = catScores.scientific_accuracy !== undefined ? catScores.scientific_accuracy : (score < 25 ? Math.min(score, 5) : Math.round(score * 0.35));
+  const taskScore = catScores.task_compliance !== undefined ? catScores.task_compliance : (score < 25 ? Math.min(score, 5) : Math.round(score * 0.25));
+  const qualScore = catScores.code_quality !== undefined ? catScores.code_quality : (score < 25 ? Math.min(score, 5) : Math.round(score * 0.15));
+
+  const criticalIssues = evalData.critical_issues || [];
+  const strengths = evalData.strengths || [];
+  const recommendations = evalData.recommendations || [];
+
+  let html = `
+    <div class="gemini-card-header">
+      <div class="gemini-card-title-group">
+        <div class="gemini-eval-badge-icon" aria-hidden="true">⚖️</div>
+        <div class="gemini-eval-title-text">
+          <h4>Gemini 3.5 Flash Lite Code Audit</h4>
+          <div class="gemini-eval-meta">
+            <span>Model: <strong>${escapeHtml(modelName)}</strong></span>
+            ${latency ? `<span>• ⚡ ${latency}</span>` : ""}
+            <span>• Strict 100-pt Rubric</span>
+          </div>
         </div>
-        <span class="thinking-summary-chevron">▾</span>
-      </summary>
-      <div class="thinking-stream-content"></div>
-    </details>
-    <div class="content-stream-container"></div>
-    <span class="streaming-cursor"></span>
+      </div>
+      <div class="gemini-score-pill-container">
+        <div class="gemini-score-badge ${scoreClass}">
+          <span class="score-num">${score}</span>
+          <span class="score-denom">/ 100</span>
+        </div>
+        <span class="gemini-verdict-tag ${verdictClass}">${escapeHtml(verdict)} • Grade ${escapeHtml(grade)}</span>
+      </div>
+    </div>
+
+    <div class="gemini-summary-box">
+      <strong>Executive Critique:</strong> ${escapeHtml(evalData.summary || "Evaluation completed.")}
+    </div>
+
+    <div class="gemini-category-grid">
+      <div class="gemini-cat-card">
+        <span class="gemini-cat-label">Execution</span>
+        <span class="gemini-cat-score">${execScore} <span style="font-size:0.75rem; color:var(--text-muted);">/ 25</span></span>
+        <div class="gemini-cat-bar">
+          <div class="gemini-cat-fill" style="width:${Math.min(100, (execScore / 25) * 100)}%; background:${execScore < 10 ? '#ef4444' : (execScore < 18 ? '#f59e0b' : '#10b981')};"></div>
+        </div>
+      </div>
+      <div class="gemini-cat-card">
+        <span class="gemini-cat-label">Scientific Rigor</span>
+        <span class="gemini-cat-score">${sciScore} <span style="font-size:0.75rem; color:var(--text-muted);">/ 35</span></span>
+        <div class="gemini-cat-bar">
+          <div class="gemini-cat-fill" style="width:${Math.min(100, (sciScore / 35) * 100)}%; background:${sciScore < 15 ? '#ef4444' : (sciScore < 25 ? '#f59e0b' : '#10b981')};"></div>
+        </div>
+      </div>
+      <div class="gemini-cat-card">
+        <span class="gemini-cat-label">Task Compliance</span>
+        <span class="gemini-cat-score">${taskScore} <span style="font-size:0.75rem; color:var(--text-muted);">/ 25</span></span>
+        <div class="gemini-cat-bar">
+          <div class="gemini-cat-fill" style="width:${Math.min(100, (taskScore / 25) * 100)}%; background:${taskScore < 10 ? '#ef4444' : (taskScore < 18 ? '#f59e0b' : '#10b981')};"></div>
+        </div>
+      </div>
+      <div class="gemini-cat-card">
+        <span class="gemini-cat-label">Code Quality</span>
+        <span class="gemini-cat-score">${qualScore} <span style="font-size:0.75rem; color:var(--text-muted);">/ 15</span></span>
+        <div class="gemini-cat-bar">
+          <div class="gemini-cat-fill" style="width:${Math.min(100, (qualScore / 15) * 100)}%; background:${qualScore < 6 ? '#ef4444' : (qualScore < 11 ? '#f59e0b' : '#10b981')};"></div>
+        </div>
+      </div>
+    </div>
   `;
 
-  assistantItem.appendChild(bubble);
-  chatThread.appendChild(assistantItem);
-  scrollToBottom(true);
+  if (criticalIssues.length > 0) {
+    html += `
+      <div class="gemini-issues-section">
+        <div class="gemini-section-header header-danger">❌ Critical Defects & Deductions (${criticalIssues.length})</div>
+        <ul class="gemini-detail-list gemini-issues-list">
+          ${criticalIssues.map(issue => `<li><span>•</span><span>${escapeHtml(issue)}</span></li>`).join("")}
+        </ul>
+      </div>
+    `;
+  }
 
-  const timerBadge = bubble.querySelector(".live-timer-badge");
-  const thinkingDetails = bubble.querySelector(".thinking-details");
-  const thinkingWordCount = bubble.querySelector(".thinking-word-count");
-  const thinkingContent = bubble.querySelector(".thinking-stream-content");
-  const contentContainer = bubble.querySelector(".content-stream-container");
-  const cursor = bubble.querySelector(".streaming-cursor");
+  if (strengths.length > 0) {
+    html += `
+      <div class="gemini-strengths-section">
+        <div class="gemini-section-header header-success">✔️ Strengths & Verified Implementations (${strengths.length})</div>
+        <ul class="gemini-detail-list gemini-strengths-list">
+          ${strengths.map(s => `<li><span>•</span><span>${escapeHtml(s)}</span></li>`).join("")}
+        </ul>
+      </div>
+    `;
+  }
 
-  contentContainer.innerHTML = getPrefillPlaceholderHtml(false);
-  let hasReceivedFirstToken = false;
+  if (recommendations.length > 0) {
+    html += `
+      <div class="gemini-recs-section">
+        <div class="gemini-section-header header-info">💡 Actionable Engineering Fixes (${recommendations.length})</div>
+        <ul class="gemini-detail-list gemini-recs-list">
+          ${recommendations.map(r => `<li><span>•</span><span>${escapeHtml(r)}</span></li>`).join("")}
+        </ul>
+      </div>
+    `;
+  }
 
-  const startTime = Date.now();
-  const timerInterval = setInterval(() => {
-    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-    timerBadge.textContent = `⏳ Live Benchmark Generation... ${elapsed}s`;
-  }, 100);
+  html += `
+    <div class="gemini-card-footer">
+      <span>${evalData.evaluation_id ? `Audit Run #${evalData.evaluation_id}` : 'Instant Assessment'} • Extreme Prejudice Metric</span>
+      <span>${evalData.execution_status ? `Execution: ${escapeHtml(evalData.execution_status)}` : 'Grounded on Task'}</span>
+    </div>
+  `;
 
-  try {
-    const response = await fetch("/api/evaluate_zero_shot/stream", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({})
-    });
+  card.innerHTML = html;
+  return card;
+}
 
-    if (!response.ok) {
-      clearInterval(timerInterval);
-      if (cursor) cursor.remove();
-      const err = await response.json().catch(() => ({ detail: "Evaluation streaming failed." }));
-      contentContainer.innerHTML = `<span style="color:var(--color-danger)"><strong>Error:</strong> ${escapeHtml(err.detail || "Evaluation failed.")}</span>`;
-      return;
-    }
+function attachGeminiEvaluateButton(bubble, content, promptText = "", sessionId = null) {
+  if (!bubble) return;
+  if (bubble.querySelector(".gemini-eval-action-container")) return;
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let thinkingAccumulated = "";
-    let contentAccumulated = "";
-    let finalEvalData = null;
+  const extractedCode = extractCodeFromMessage(content);
+  if (!extractedCode) return;
 
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
+  const dockerOut = extractDockerOutputFromMessage(content);
 
-      buffer += decoder.decode(value, { stream: true });
-      const parts = buffer.split("\n\n");
-      buffer = parts.pop();
+  const container = document.createElement("div");
+  container.className = "gemini-eval-action-container";
 
-      for (const part of parts) {
-        const cleanedPart = part.trim();
-        if (!cleanedPart.startsWith("data:")) continue;
-        const jsonStr = cleanedPart.replace(/^data:\s*/, "").trim();
-        if (!jsonStr) continue;
+  container.innerHTML = `
+    <div class="gemini-eval-btn-wrapper">
+      <button class="btn-gemini-eval" type="button" title="Evaluate script with Gemini 3.5 Flash Lite (Strict 100-pt rubric)">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+          <path d="M12 3v18M18 6l-6-3-6 3M18 18l-6 3-6-3M6 10l-4 2 4 2M18 10l4 2-4 2" />
+        </svg>
+        <span>Evaluate Script (Gemini 3.5 Flash Lite)</span>
+      </button>
+      <span class="gemini-eval-hint">Strict 100-pt audit • Extreme prejudice</span>
+    </div>
+    <div class="gemini-eval-result-host" style="display:none;"></div>
+  `;
 
-        try {
-          const event = JSON.parse(jsonStr);
+  const btn = container.querySelector(".btn-gemini-eval");
+  const resultHost = container.querySelector(".gemini-eval-result-host");
 
-          if (event.type === "session") {
-            currentSessionId = event.session_id;
-          } else if (event.type === "thinking") {
-            if (!hasReceivedFirstToken) {
-              hasReceivedFirstToken = true;
-              contentContainer.innerHTML = "";
-            }
-            thinkingDetails.style.display = "block";
-            thinkingAccumulated += event.delta;
-            thinkingContent.innerHTML = renderThinkingBody(thinkingAccumulated);
-            const words = thinkingAccumulated.split(/\s+/).filter(Boolean).length;
-            thinkingWordCount.textContent = words;
-            scrollToBottom(false);
-          } else if (event.type === "content") {
-            if (!hasReceivedFirstToken) {
-              hasReceivedFirstToken = true;
-              contentContainer.innerHTML = "";
-            }
-            contentAccumulated += event.delta;
-            const isCodeUnclosed = ((contentAccumulated.match(/```/g) || []).length % 2 === 1);
-            if (cursor) cursor.style.display = isCodeUnclosed ? "none" : "inline-block";
-            contentContainer.innerHTML = renderMarkdown(contentAccumulated, true);
-            scrollToBottom(false);
-          } else if (event.type === "eval_complete") {
-            finalEvalData = event;
-          } else if (event.type === "done") {
-            clearInterval(timerInterval);
-            if (cursor) cursor.remove();
-            const elapsed = event.latency_seconds !== undefined ? event.latency_seconds.toFixed(1) : ((Date.now() - startTime) / 1000).toFixed(1);
-            timerBadge.textContent = `⚡ Generated in ${elapsed}s • Scoring AST...`;
-            if (thinkingAccumulated) {
-              thinkingContent.innerHTML = renderThinkingBody(thinkingAccumulated);
-              thinkingDetails.open = false;
-            }
-            contentContainer.innerHTML = renderMarkdown(contentAccumulated, false);
-            scrollToBottom(false);
-          }
-        } catch (err) {
-          console.warn("SSE parse error in flagship eval:", err);
-        }
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    btn.classList.add("is-loading");
+    const btnSpan = btn.querySelector("span");
+    btnSpan.textContent = "Evaluating with Gemini 3.5 Flash Lite...";
+
+    try {
+      const taskPrompt = promptText || getLastUserPrompt();
+      const res = await fetch("/api/evaluate/gemini", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          code: extractedCode,
+          prompt: taskPrompt,
+          execution_output: dockerOut,
+          session_id: sessionId || currentSessionId
+        })
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: "Evaluation failed." }));
+        throw new Error(err.detail || `Server returned ${res.status}`);
       }
-    }
 
-    clearInterval(timerInterval);
-    if (cursor) cursor.remove();
+      const evalData = await res.json();
+      resultHost.innerHTML = "";
+      resultHost.appendChild(createGeminiReportCardElement(evalData, extractedCode, taskPrompt));
+      resultHost.style.display = "block";
 
-    if (finalEvalData) {
-      currentSessionId = finalEvalData.session_id;
-      timerBadge.textContent = `⚡ Completed (${finalEvalData.score}/100 Grade ${finalEvalData.grade})`;
-      renderEvaluationReport(finalEvalData);
-      if (finalEvalData.notebook_attached && finalEvalData.notebook_attached.status === "success") {
-        showToast("✓ Generated script attached to running.ipynb! Ready to run in Colab/Kaggle.", "success", 4500);
-      }
+      btn.classList.remove("is-loading");
+      btn.disabled = false;
+      btnSpan.textContent = "🔄 Re-evaluate with Gemini 3.5 Flash Lite";
+
       await loadEvaluationHistory();
-      await loadSessions();
-      scrollToBottom();
+      scrollToBottom(false);
+    } catch (err) {
+      btn.classList.remove("is-loading");
+      btn.disabled = false;
+      btnSpan.textContent = "⚠️ Retry Gemini Evaluation";
+      showToast(`Gemini evaluation error: ${err.message}`, "error", 4500);
     }
-  } catch (err) {
-    clearInterval(timerInterval);
-    if (cursor) cursor.remove();
-    appendMessage("assistant", `**Network Error**: Failed to run evaluation (${escapeHtml(err.message)}).`);
-    scrollToBottom();
-  } finally {
-    runFlagshipEvalBtn.disabled = false;
-    runFlagshipEvalBtn.innerHTML = originalBtnHtml;
+  });
+
+  const metaDiv = bubble.querySelector(".message-meta");
+  if (metaDiv) {
+    bubble.insertBefore(container, metaDiv);
+  } else {
+    bubble.appendChild(container);
   }
 }
 
@@ -1071,7 +1096,7 @@ async function loadEvaluationHistory() {
 
     evalHistoryList.innerHTML = "";
     if (evals.length === 0) {
-      evalHistoryList.innerHTML = `<div style="font-size:0.75rem; color:var(--text-muted); padding:6px 0;">No benchmark runs yet</div>`;
+      evalHistoryList.innerHTML = `<div style="font-size:0.75rem; color:var(--text-muted); padding:6px 0;">No code evaluations yet</div>`;
       return;
     }
 
@@ -1080,17 +1105,17 @@ async function loadEvaluationHistory() {
       item.className = "eval-history-item";
 
       const dateStr = ev.created_at ? formatShortDate(ev.created_at) : "Recent";
-      const gradeClass = `grade-${ev.grade || "F"}`;
-      const isHybrid = ev.evaluation_type === "dynamic_hybrid";
-      const badgeIcon = isHybrid ? "🧪" : "🎯";
-      const domainLabel = ev.domain ? ` • ${ev.domain.replace(/_/g, " ")}` : "";
+      const score = Math.round(ev.score !== undefined ? ev.score : 0);
+      const grade = ev.grade || (score >= 80 ? "A" : (score >= 60 ? "B" : (score >= 40 ? "C" : (score >= 20 ? "D" : "F"))));
+      const gradeClass = `grade-${grade}`;
+      const verdict = ev.verdict ? ` • ${ev.verdict}` : "";
 
       item.innerHTML = `
         <div class="eval-history-left">
-          <span class="eval-history-title">${badgeIcon} Eval #${ev.id} • ${ev.score}/100</span>
-          <span class="eval-history-time">${dateStr}${domainLabel}</span>
+          <span class="eval-history-title">⚖️ Audit #${ev.id} • ${score}/100</span>
+          <span class="eval-history-time">${dateStr}${verdict}</span>
         </div>
-        <span class="eval-history-badge ${gradeClass}">${ev.grade || "F"}</span>
+        <span class="eval-history-badge ${gradeClass}">${grade}</span>
       `;
 
       item.addEventListener("click", () => {
@@ -1106,228 +1131,16 @@ async function loadEvaluationHistory() {
   }
 }
 
-// Render the 100-point accuracy report card
+// Render the Gemini audit report card in thread
 function renderEvaluationReport(ev) {
   const container = document.createElement("div");
   container.className = "message-item assistant";
 
-  const card = document.createElement("div");
-  card.className = "evaluation-report-card";
-
-  const grade = ev.grade || "F";
-  const score = ev.score !== undefined ? ev.score : 0;
-  const gradeClass = `grade-${grade}`;
-  const latency = ev.latency_seconds ? `${ev.latency_seconds.toFixed(1)}s` : "N/A";
-  const modelName = ev.model || ev.model_name || "batiai/gemma4-e2b:q4";
-  const report = ev.evaluation_report || {};
-  const passedChecks = ev.passed_checks || report.passed_checks || [];
-  const failedChecks = ev.failed_checks || report.failed_checks || [];
-  const summaryText = ev.summary || report.summary || "Script benchmark completed.";
-  const catScores = ev.category_scores || {};
-  const codeText = ev.generated_code || "";
-
-  const isHybrid = ev.evaluation_type === "dynamic_hybrid";
-  const titleText = isHybrid
-    ? `Dynamic Scientific Evaluator (${(ev.domain || "Simulation").replace(/_/g, " ").toUpperCase()})`
-    : "Interfacial Water Dynamics Generator";
-  const modeLabel = isHybrid ? "Dynamic Hybrid Test Suite" : "Zero-Shot Flagship Benchmark";
-
-  // 1. Header
-  let html = `
-    <div class="eval-card-header">
-      <div class="score-badge-container">
-        <div class="score-circle">
-          <span class="score-num">${score}</span>
-          <span class="score-denom">/ 100</span>
-        </div>
-        <div class="score-text-details">
-          <h3>${escapeHtml(titleText)}</h3>
-          <div style="display:flex; align-items:center; gap:8px;">
-            <span class="grade-pill ${gradeClass}">Grade ${grade}</span>
-            <span style="font-size:0.75rem; color:var(--text-muted);">Model: ${escapeHtml(modelName)}</span>
-          </div>
-        </div>
-      </div>
-      <div class="message-meta">
-        <span class="latency-pill">⚡ ${latency}</span>
-        <span>${escapeHtml(modeLabel)}</span>
-      </div>
-    </div>
-  `;
-
-  // 2. Summary
-  html += `
-    <div style="font-size:0.88rem; color:var(--text-secondary); line-height:1.5;">
-      ${escapeHtml(summaryText)}
-    </div>
-  `;
-
-  if (ev.notebook_context || !isHybrid) {
-    const sysName = (ev.notebook_context && ev.notebook_context.system_name) || "molecular";
-    const detSys = (ev.notebook_context && ev.notebook_context.detected_system) || "Anatase (TiO2) / Water Interface";
-    html += `
-      <div style="display:flex; align-items:center; gap:8px; background:rgba(59,130,246,0.08); border:1px solid rgba(59,130,246,0.22); border-radius:6px; padding:6px 12px; margin:8px 0; font-size:0.78rem; color:var(--text-secondary);">
-        <span>📓</span>
-        <span><strong>running.ipynb Context Grounding</strong>: Script synthesized with pre-loaded <code>traj</code> (${escapeHtml(detSys)} • <code>${escapeHtml(sysName)}</code>) in Colab execution scope</span>
-      </div>
-    `;
-  }
-
-  // 3. Category Progress Bars
-  html += `<div class="category-bars-grid">`;
-  const activeCategoryKeys = Object.keys(catScores).length > 0
-    ? Object.keys(catScores)
-    : Object.keys(CATEGORY_META).slice(0, 5);
-
-  // Client-side consistency check: ensure category scores sum to headline score
-  const totalCatSum = activeCategoryKeys.reduce((acc, k) => acc + ((catScores[k] && catScores[k].score) || 0), 0);
-  const scaleRatio = (totalCatSum > 0 && score < totalCatSum) ? (score / totalCatSum) : 1;
-
-  for (const key of activeCategoryKeys) {
-    const meta = CATEGORY_META[key] || { label: key.replace(/_/g, " ").toUpperCase(), max: 25 };
-    const catData = catScores[key] || { score: 0, max: meta.max };
-    const rawCatScore = catData.score !== undefined ? catData.score : 0;
-    const curScore = scaleRatio < 1 ? Math.round(rawCatScore * scaleRatio) : rawCatScore;
-    const maxScore = catData.max || meta.max;
-    const pct = scaleRatio < 1 
-      ? Math.min(100, Math.round((curScore / maxScore) * 100))
-      : (catData.pct !== undefined ? catData.pct : Math.round((curScore / maxScore) * 100));
-
-    // Dynamic color gradient based on percentage so failing/degraded categories are visually distinct
-    let barGradient = "var(--accent-gradient)";
-    if (pct <= 35) {
-      barGradient = "linear-gradient(90deg, #ef4444, #f87171)";
-    } else if (pct <= 60) {
-      barGradient = "linear-gradient(90deg, #f59e0b, #fbbf24)";
-    }
-
-    html += `
-      <div class="cat-row">
-        <div class="cat-meta">
-          <span>${meta.label}</span>
-          <span><strong>${curScore}</strong> / ${maxScore} pts (${pct}%)</span>
-        </div>
-        <div class="cat-bar-bg">
-          <div class="cat-bar-fill" style="width: ${Math.min(pct, 100)}%; background: ${barGradient};"></div>
-        </div>
-      </div>
-    `;
-  }
-  html += `</div>`;
-
-  // 4. Diagnostic Checklist Accordion
-  html += `
-    <details class="eval-details" open>
-      <summary>
-        <span>Diagnostic Evaluation Checklist (${passedChecks.length} Passed, ${failedChecks.length} Failed)</span>
-      </summary>
-      <div class="eval-details-content eval-checks-accordion">
-  `;
-
-  passedChecks.forEach((chk) => {
-    html += `
-      <div class="check-item">
-        <span class="check-icon passed">✓</span>
-        <span style="color:var(--text-primary);">${escapeHtml(chk)}</span>
-      </div>
-    `;
-  });
-
-  failedChecks.forEach((chk) => {
-    html += `
-      <div class="check-item">
-        <span class="check-icon failed">✗</span>
-        <span style="color:var(--text-secondary);">${escapeHtml(chk)}</span>
-      </div>
-    `;
-  });
-
-  html += `
-      </div>
-    </details>
-  `;
-
-  // 5. Extracted Python Script Accordion
-  const codeLines = codeText ? codeText.split("\n").length : 0;
-  html += `
-    <details class="eval-details">
-      <summary>
-        <span>Extracted Python Script (${codeLines} lines)</span>
-      </summary>
-      <div class="code-header-bar">
-        <span>Zero-Shot Generated Implementation</span>
-        <div style="display:flex; gap:6px; align-items:center;">
-          <button class="btn-attach-notebook" type="button" title="Attach script to running.ipynb">📓 Attach to Colab Notebook</button>
-          <button class="btn-copy-code" type="button">Copy Code</button>
-        </div>
-      </div>
-      <div class="eval-details-content" style="padding:0;">
-        <pre style="margin:0; border:none; border-radius:0;"><code class="language-python">${escapeHtml(codeText || "# No code extracted from response")}</code></pre>
-      </div>
-    </details>
-  `;
-
-  card.innerHTML = html;
-
-  // Copy button handler
-  const copyBtn = card.querySelector(".btn-copy-code");
-  if (copyBtn && codeText) {
-    copyBtn.addEventListener("click", async (e) => {
-      e.stopPropagation();
-      try {
-        await navigator.clipboard.writeText(codeText);
-        copyBtn.textContent = "Copied!";
-        setTimeout(() => { copyBtn.textContent = "Copy Code"; }, 2000);
-      } catch (err) {
-        copyBtn.textContent = "Error";
-      }
-    });
-  }
-
-  // Attach to notebook button handler
-  const attachBtn = card.querySelector(".btn-attach-notebook");
-  if (attachBtn && codeText) {
-    attachBtn.addEventListener("click", async (e) => {
-      e.stopPropagation();
-      attachBtn.disabled = true;
-      attachBtn.textContent = "⏳ Attaching...";
-      try {
-        const res = await fetch("/api/notebooks/attach", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ code: codeText, notebook_name: "running.ipynb" })
-        });
-        const data = await res.json();
-        if (res.ok && data.status === "success") {
-          attachBtn.textContent = "✓ Attached!";
-          showToast(`Attached script to running.ipynb (Cell #${data.target_cell_index + 1})! Ready to run.`, "success", 4000);
-          setTimeout(() => {
-            attachBtn.textContent = "📓 Attach to Colab Notebook";
-            attachBtn.disabled = false;
-          }, 3000);
-        } else {
-          throw new Error(data.detail || "Failed to attach");
-        }
-      } catch (err) {
-        attachBtn.textContent = "Error";
-        showToast(`Failed to attach: ${err.message}`, "error", 4000);
-        setTimeout(() => {
-          attachBtn.textContent = "📓 Attach to Colab Notebook";
-          attachBtn.disabled = false;
-        }, 3000);
-      }
-    });
-  }
-
+  const card = createGeminiReportCardElement(ev, ev.generated_code, ev.prompt);
   container.appendChild(card);
   chatThread.appendChild(container);
-
-  // Animate the score counter
-  const scoreNumEl = card.querySelector(".score-num");
-  if (scoreNumEl && score > 0) {
-    animateScoreCounter(scoreNumEl, score, 1200);
-  }
 }
+
 
 // Format short date helper
 function formatShortDate(dateStr) {
@@ -1650,6 +1463,8 @@ chatForm.addEventListener("submit", async (e) => {
               thinkingDetails.open = false; // Collapse thinking process upon completion
             }
 
+            attachGeminiEvaluateButton(bubble, contentAccumulated, text, currentSessionId);
+
             const metaDiv = document.createElement("div");
             metaDiv.className = "message-meta";
             metaDiv.style.marginTop = "8px";
@@ -1712,6 +1527,10 @@ function appendMessage(role, content, meta = {}) {
   const contentDiv = document.createElement("div");
   contentDiv.innerHTML = renderMarkdown(content);
   bubble.appendChild(contentDiv);
+
+  if (role === "assistant") {
+    attachGeminiEvaluateButton(bubble, content, meta.prompt || getLastUserPrompt(), currentSessionId);
+  }
 
   item.appendChild(bubble);
 
