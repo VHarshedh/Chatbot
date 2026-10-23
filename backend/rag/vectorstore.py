@@ -18,9 +18,9 @@ def provenance(path):
         source = path.relative_to(Path(settings.WORKSPACE_ROOT).resolve()).as_posix()
     except ValueError:
         source = path.as_posix()
-    domain = next((label for folder, label in (("DFT", "DFT"), ("Molecular Dynamics", "Molecular Dynamics"), ("Training", "DeepMD Training"), ("Analysis", "Interfacial Analysis")) if folder in path.parts), "General")
+    domain = next((label for folder, label in (("DFT", "DFT"), ("Molecular Dynamics", "Molecular Dynamics"), ("Training", "DeepMD Training"), ("Analysis", "Interfacial Analysis"), ("docs", "ASE Documentation")) if folder in path.parts), "General")
     name = source.lower()
-    system = next((tag for words, tag in ((["tio2", "anatase", "running.ipynb"], "TiO2"), (["iro2"], "IrO2"), (["graphene"], "Graphene"), (["water"], "Water"), (["pt.cif", "platinum"], "Pt")) if any(w in name for w in words)), "General")
+    system = next((tag for words, tag in ((["tio2", "anatase", "running.ipynb"], "TiO2"), (["iro2"], "IrO2"), (["graphene"], "Graphene"), (["water"], "Water"), (["pt.cif", "platinum"], "Pt"), (["ase"], "ASE")) if any(w in name for w in words)), "General")
     return {"source": source, "domain": domain, "system_tag": system}
 
 

@@ -184,6 +184,7 @@ class SandboxExecutor:
             return {
                 "stdout": logs if exit_code == 0 else "",
                 "stderr": logs if exit_code != 0 else "",
+                "logs": logs,
                 "exit_code": exit_code,
                 "artifacts": generated_files
             }

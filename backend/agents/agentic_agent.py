@@ -7,7 +7,7 @@ from typing import Dict, Any, Generator, Optional, List
 from backend.config import settings
 from backend.rag.hybrid_retriever import HybridRetriever
 from backend.tools.sandbox_tools import run_python_in_sandbox
-from backend.tools.web_tools import search_web
+from backend.tools.web_tools import search_web, read_url_content
 from backend.db.models import insert_session, insert_message, get_chat_history
 
 AGENTIC_CODEGEN_SYSTEM_PROMPT = (
@@ -66,15 +66,23 @@ AGENTIC_SYNTHESIS_SYSTEM_PROMPT = (
 class AgenticRAGAgent:
     """
     Autonomous Scientific AI Agent with full capabilities:
-    1. Hybrid RAG: ChromaDB Vector Store + Kùzu Knowledge Graph
+    1. Hybrid RAG: ChromaDB Vector Store + Kùzu Knowledge Graph (ASE Documentation included)
     2. Secure Sandbox: Isolated Docker execution with automated self-correction
-    3. Web Search: DuckDuckGo documentation and syntax lookup
+    3. Web Search & URL Tools: DuckDuckGo documentation and syntax lookup
     """
 
     def __init__(self, model: Optional[str] = None, base_url: Optional[str] = None):
         self.model = model or settings.MODEL_NAME
         self.base_url = (base_url or settings.OLLAMA_BASE_URL).rstrip("/")
         self.retriever = HybridRetriever()
+
+    def search_web(self, query: str, max_results: int = 3) -> list:
+        """Searches the web via DuckDuckGo."""
+        return search_web(query, max_results=max_results)
+
+    def read_url_content(self, url: str) -> str:
+        """Fetches and extracts text from a specified URL."""
+        return read_url_content(url)
 
     def _is_execution_request(self, text: str) -> bool:
         """Determines if the user query asks to write/run code or execute a simulation analysis"""

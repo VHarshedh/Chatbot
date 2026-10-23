@@ -4,9 +4,8 @@ from .gemini_evaluator import GeminiEvaluator
 
 class ScriptEvaluator:
     """
-    Scientific Script Evaluation Engine powered by Gemini 3.8 Flash.
-    Replaces legacy AST/heuristic benchmark rules with ruthless, peer-review-grade
-    LLM evaluation with extreme prejudice and strict 100-point scoring.
+    Scientific Script Evaluation Engine powered by the configured Gemini model.
+    Combines local syntax checks with schema-validated scientific review.
     """
 
     def __init__(self):
@@ -44,8 +43,8 @@ class ScriptEvaluator:
         session_id: Optional[int] = None
     ) -> Dict[str, Any]:
         """
-        Evaluates a zero-shot or agentic generated script using Gemini 3.8 Flash.
-        Strict scoring: failing/incorrect code is ruled around 20%.
+        Evaluates a zero-shot or agentic generated script using the configured Gemini model.
+        Blocking code defects cap the score at 25; service failures remain ungraded.
         """
         code = self.extract_python_code(raw_response)
         if not execution_output:
@@ -55,7 +54,8 @@ class ScriptEvaluator:
             code_or_response=code if code else raw_response,
             prompt=prompt,
             execution_output=execution_output,
-            session_id=session_id
+            session_id=session_id,
+            notebook_context=notebook_context
         )
         result["notebook_context"] = notebook_context
         return result

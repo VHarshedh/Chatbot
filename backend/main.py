@@ -1,5 +1,7 @@
 import os
 import json
+import asyncio
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional, List
 from fastapi import FastAPI, HTTPException
@@ -9,6 +11,7 @@ from pydantic import BaseModel
 from backend.config import settings
 import uuid
 from backend.agents.baseline_agent import SingleShotAgent
+from backend.agents.execution_intent import requests_sandbox_execution
 from backend.agents.agentic_agent import AgenticRAGAgent
 from backend.evaluation.script_evaluator import ScriptEvaluator
 from backend.evaluation.gemini_evaluator import GeminiEvaluator
@@ -35,7 +38,7 @@ from backend.notebooks.attach_to_notebook import (
 )
 
 def _index_evaluated_memory(session_id, prompt, response, evaluation):
-    if session_id is None or evaluation.get("score", 0) < 80:
+    if session_id is None or evaluation.get("audit_status") == "error" or (evaluation.get("score") or 0) < 80:
         return
     try:
         from backend.rag.chat_memory import get_chat_memory_store
@@ -48,7 +51,39 @@ def _index_evaluated_memory(session_id, prompt, response, evaluation):
         print(f"Notice: Could not index evaluated memory: {exc}")
 
 
-app = FastAPI(title="Scientific Computing Chatbox API", version="1.0.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    try:
+        from backend.rag.chat_memory import get_chat_memory_store
+        get_chat_memory_store().ingest_all_sessions()
+    except Exception as e:
+        print(f"Notice: Background memory sync on startup skipped: {e}")
+
+    settings.NUM_GPU = int(os.getenv("NUM_GPU", str(settings.NUM_GPU)))
+    gpu_mode = "CPU-only (NUM_GPU=0)" if settings.NUM_GPU == 0 else (
+        "GPU — all layers (AMD Radeon via ROCm/HIP)" if settings.NUM_GPU == -1
+        else f"GPU — {settings.NUM_GPU} layers"
+    )
+    print(f"Starting Scientific Computing API with active model: {settings.MODEL_NAME}")
+    print(f"Inference device: {gpu_mode}")
+    print(f"  To force CPU-only: set NUM_GPU=0 before starting (e.g. NUM_GPU=0 uvicorn ...)")
+    print("Zero-Shot Script Generation & Accuracy Evaluation Engine active")
+    try:
+        yield
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        pass
+
+async def startup_event():
+    """Backward-compatible helper for tests invoking startup_event directly."""
+    init_db()
+    try:
+        from backend.rag.chat_memory import get_chat_memory_store
+        get_chat_memory_store().ingest_all_sessions()
+    except Exception as e:
+        print(f"Notice: Background memory sync on startup skipped: {e}")
+
+app = FastAPI(title="Scientific Computing Chatbox API", version="1.0.0", lifespan=lifespan)
 
 # Setup frontend directory (located at root ChatBot/frontend)
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
@@ -67,6 +102,7 @@ class ChatRequest(BaseModel):
     include_notebook_context: Optional[bool] = None
     notebook_name: Optional[str] = "running.ipynb"
     images: Optional[List[str]] = None
+    run_sandbox: Optional[bool] = None
 
 class SessionCreateRequest(BaseModel):
     title: Optional[str] = "New Session"
@@ -208,11 +244,14 @@ def chat_endpoint(request: ChatRequest):
         except Exception:
             pass
 
+    should_run_sandbox = request.run_sandbox if request.run_sandbox is not None else requests_sandbox_execution(raw_text)
     result = agent.chat(
         user_message=user_msg,
         session_id=request.session_id,
         system_prompt=request.system_prompt,
-        images=request.images
+        images=request.images,
+        **({"run_sandbox": should_run_sandbox}
+           if request.mode not in ["agentic", "agentic_rag"] else {})
     )
     return result
 
@@ -241,12 +280,15 @@ def chat_stream_endpoint(request: ChatRequest):
         except Exception:
             pass
 
+    should_run_sandbox = request.run_sandbox if request.run_sandbox is not None else requests_sandbox_execution(raw_text)
     return StreamingResponse(
         agent.chat_stream(
             user_message=user_msg,
             session_id=request.session_id,
             system_prompt=request.system_prompt,
-            images=request.images
+            images=request.images,
+            **({"run_sandbox": should_run_sandbox}
+               if request.mode not in ["agentic", "agentic_rag"] else {})
         ),
         media_type="text/event-stream",
         headers={
@@ -259,7 +301,7 @@ def chat_stream_endpoint(request: ChatRequest):
 @app.post("/api/evaluate/gemini")
 def evaluate_gemini_endpoint(request: GeminiEvaluationRequest):
     """
-    Evaluates generated Python code using Gemini 3.8 Flash with extreme prejudice.
+    Evaluates generated Python code using the configured Gemini model with validated scoring.
     Strict scoring: incorrect output or failing code is ruled around 20%.
     """
     evaluator = GeminiEvaluator()
@@ -269,6 +311,8 @@ def evaluate_gemini_endpoint(request: GeminiEvaluationRequest):
         execution_output=request.execution_output,
         session_id=request.session_id
     )
+    if result.get("audit_status") == "error":
+        raise HTTPException(status_code=502, detail=result["summary"])
     return result
 
 @app.post("/api/evaluate_zero_shot/stream")
@@ -346,10 +390,13 @@ Think efficiently in 4 brief steps (maximum 120 words):
                 notebook_context=nb_context,
                 session_id=session_id
             )
+            if evaluation.get("audit_status") == "error":
+                yield f"data: {json.dumps({'type': 'error', 'message': evaluation['summary']})}\n\n"
+                return
             _index_evaluated_memory(session_id, full_prompt, full_response_text, evaluation)
 
             eval_id = evaluation.get("evaluation_id")
-            if not eval_id:
+            if not eval_id and evaluation.get("audit_status") != "completed":
                 eval_id = insert_evaluation(
                     session_id=session_id,
                     model_name=evaluation.get("model", settings.MODEL_NAME),
@@ -467,10 +514,12 @@ def evaluate_zero_shot_endpoint(request: EvaluationRequest):
     raw_response = chat_res.get("response", "")
     evaluator = ScriptEvaluator()
     evaluation = evaluator.evaluate(raw_response, prompt=base_prompt, notebook_context=nb_context, session_id=chat_res["session_id"])
+    if evaluation.get("audit_status") == "error":
+        raise HTTPException(status_code=502, detail=evaluation["summary"])
     _index_evaluated_memory(chat_res["session_id"], full_prompt, raw_response, evaluation)
 
     eval_id = evaluation.get("evaluation_id")
-    if not eval_id:
+    if not eval_id and evaluation.get("audit_status") != "completed":
         eval_id = insert_evaluation(
             session_id=chat_res["session_id"],
             model_name=evaluation.get("model", settings.MODEL_NAME),
@@ -592,7 +641,9 @@ def list_evaluations():
                 item["failed_checks"] = rep.get("failed_checks", [])
                 item["summary"] = rep.get("summary", "")
                 item["verdict"] = rep.get("verdict", "")
-                item["execution_status"] = rep.get("execution_status", "")
+                item["execution_status"] = rep.get("execution_status", "Untested")
+                for field in ("audit_status", "audit_version", "review_type", "execution_evidence", "raw_score", "score_cap"):
+                    item[field] = rep.get(field)
                 item["critical_issues"] = rep.get("critical_issues", [])
                 item["strengths"] = rep.get("strengths", [])
                 item["recommendations"] = rep.get("recommendations", [])
@@ -673,24 +724,7 @@ def sync_chat_memory():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Memory sync failed: {e}")
 
-@app.on_event("startup")
-async def startup_event():
-    init_db()
-    try:
-        from backend.rag.chat_memory import get_chat_memory_store
-        get_chat_memory_store().ingest_all_sessions()
-    except Exception as e:
-        print(f"Notice: Background memory sync on startup skipped: {e}")
 
-    settings.NUM_GPU = int(os.getenv("NUM_GPU", str(settings.NUM_GPU)))
-    gpu_mode = "CPU-only (NUM_GPU=0)" if settings.NUM_GPU == 0 else (
-        "GPU — all layers (AMD Radeon via ROCm/HIP)" if settings.NUM_GPU == -1
-        else f"GPU — {settings.NUM_GPU} layers"
-    )
-    print(f"Starting Scientific Computing API with active model: {settings.MODEL_NAME}")
-    print(f"Inference device: {gpu_mode}")
-    print(f"  To force CPU-only: set NUM_GPU=0 before starting (e.g. NUM_GPU=0 uvicorn ...)")
-    print("Zero-Shot Script Generation & Accuracy Evaluation Engine active")
 
 if __name__ == "__main__":
     import uvicorn

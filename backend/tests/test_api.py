@@ -114,6 +114,21 @@ def test_evaluate_zero_shot_success(mocker):
     }
     mocker.patch("backend.main.SingleShotAgent.chat", return_value=mock_chat_res)
     mocker.patch("backend.main.insert_evaluation", return_value=1)
+    mock_eval = {
+        "audit_status": "completed",
+        "score": 92.0,
+        "grade": "A",
+        "verdict": "PASS",
+        "evaluation_id": 1,
+        "category_scores": {"code_validity": 20, "surface_detection": 20},
+        "critical_issues": [],
+        "strengths": ["Clean code"],
+        "recommendations": [],
+        "summary": "Looks good",
+        "extracted_code": "import numpy as np\nimport ase\n# m_sur cus",
+        "evaluation_type": "gemini_strict"
+    }
+    mocker.patch("backend.main.ScriptEvaluator.evaluate", return_value=mock_eval)
 
     response = client.post("/api/evaluate_zero_shot", json={"session_id": 50})
     assert response.status_code == 200
@@ -163,6 +178,21 @@ def test_evaluate_zero_shot_stream_success(mocker):
     ]
     mocker.patch("backend.main.SingleShotAgent.chat_stream", return_value=iter(mock_events))
     mocker.patch("backend.main.insert_evaluation", return_value=12)
+    mock_eval = {
+        "audit_status": "completed",
+        "score": 90.0,
+        "grade": "A",
+        "verdict": "PASS",
+        "evaluation_id": 12,
+        "category_scores": {"code_validity": 20},
+        "critical_issues": [],
+        "strengths": [],
+        "recommendations": [],
+        "summary": "Good",
+        "extracted_code": "import numpy as np\nimport ase",
+        "evaluation_type": "gemini_strict"
+    }
+    mocker.patch("backend.main.ScriptEvaluator.evaluate", return_value=mock_eval)
 
     response = client.post("/api/evaluate_zero_shot/stream", json={"session_id": 99})
     assert response.status_code == 200

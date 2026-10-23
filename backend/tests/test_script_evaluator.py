@@ -37,20 +37,21 @@ Successfully generated figure.
 def test_gemini_evaluator_empty_code():
     evaluator = GeminiEvaluator()
     res = evaluator.evaluate("")
-    assert res["score"] == 0
-    assert res["verdict"] == "FAIL"
-    assert res["grade"] == "F"
+    assert res["score"] is None
+    assert res["verdict"] == "ERROR"
+    assert res["grade"] is None
     assert "empty" in res["summary"].lower()
-    assert len(res["critical_issues"]) >= 1
+    assert res["audit_status"] == "error"
 
     res_no_code = evaluator.evaluate("Natural language only, no python block.")
-    assert res_no_code["score"] == 0
-    assert res_no_code["verdict"] == "FAIL"
+    assert res_no_code["score"] is None
+    assert res_no_code["verdict"] == "ERROR"
     assert "empty" in res_no_code["summary"].lower()
-    assert len(res_no_code["critical_issues"]) >= 1
+    assert res_no_code["audit_status"] == "error"
 
 
-def test_gemini_evaluator_mock_success():
+def test_gemini_evaluator_mock_success(mocker):
+    mocker.patch("backend.evaluation.gemini_evaluator.insert_evaluation", return_value=1)
     evaluator = GeminiEvaluator()
 
     mock_gemini_response = {
@@ -59,6 +60,7 @@ def test_gemini_evaluator_mock_success():
         "verdict": "FAIL",
         "summary": "The script uses fabricated dummy data and failed to load real trajectory files.",
         "execution_status": "Failed",
+        "blocking_failure": True,
         "category_scores": {
             "execution_integrity": 5,
             "scientific_accuracy": 5,
@@ -95,7 +97,8 @@ def test_gemini_evaluator_mock_success():
         assert "Fake mock data: Simulated random coordinates instead of reading trajectory." in res["failed_checks"]
 
 
-def test_script_evaluator_delegation():
+def test_script_evaluator_delegation(mocker):
+    mocker.patch("backend.evaluation.gemini_evaluator.insert_evaluation", return_value=1)
     evaluator = ScriptEvaluator()
 
     mock_gemini_response = {
@@ -103,7 +106,8 @@ def test_script_evaluator_delegation():
         "grade": "A",
         "verdict": "PASS",
         "summary": "Flawless scientific implementation with robust PBC wrapping.",
-        "execution_status": "Verified",
+        "execution_status": "Untested",
+        "blocking_failure": False,
         "category_scores": {
             "execution_integrity": 25,
             "scientific_accuracy": 33,

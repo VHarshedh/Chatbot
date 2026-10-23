@@ -1,6 +1,8 @@
+import re
 import requests
 from backend.config import settings
 from backend.rag.hybrid_retriever import HybridRetriever
+from backend.tools.web_tools import search_web, read_url_content
 
 QA_SYSTEM_PROMPT = (
     "SYSTEM DIRECTIVE: You are SciCompute AI, an authoritative scientific computing and computational materials assistant "
@@ -21,6 +23,14 @@ class QAAgent:
         self.retriever = HybridRetriever()
         self.model = settings.MODEL_NAME
         self.base_url = settings.OLLAMA_BASE_URL
+
+    def search_web(self, query: str, max_results: int = 3) -> list:
+        """Searches the web via DuckDuckGo."""
+        return search_web(query, max_results=max_results)
+
+    def read_url_content(self, url: str) -> str:
+        """Fetches and extracts text from a specified URL."""
+        return read_url_content(url)
         
     def answer_question(self, question: str) -> str:
         """Alias for answer() method."""
@@ -30,6 +40,25 @@ class QAAgent:
         # 1. Retrieve context
         print("Retrieving context...")
         context = self.retriever.retrieve(question)
+
+        # 2. Enrich with web tools if requested or URLs present
+        web_context = []
+        if re.search(r"\b(search (?:the )?web|web search|look up online|search online)\b", question, re.I):
+            clean_q = re.sub(r"(?i)\b(search (?:the )?web (?:for)?|look up online (?:for)?|web search)\b", "", question).strip() or question
+            web_hits = self.search_web(clean_q, max_results=3)
+            if web_hits and not web_hits[0].get("error"):
+                formatted = "\n".join(f"- {h.get('title')}: {h.get('body')} ({h.get('href')})" for h in web_hits if h.get("title"))
+                if formatted:
+                    web_context.append(f"Web Search Results:\n{formatted}")
+
+        urls = re.findall(r"https?://[^\s)\]]+", question)
+        for u in urls[:2]:
+            u_text = self.read_url_content(u)
+            if u_text and not u_text.startswith("Error"):
+                web_context.append(f"Content from {u}:\n{u_text[:2000]}")
+
+        if web_context:
+            context = f"{context}\n\n" + "\n\n".join(web_context)
         
         # 2. Build user prompt
         user_prompt = f"""Retrieved Domain Context:

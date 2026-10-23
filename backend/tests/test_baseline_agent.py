@@ -340,3 +340,96 @@ def test_chat_stream_with_history(mocker):
     assert msgs[2]["content"] == "Turn 1 answer"
     assert msgs[3]["content"] == "Turn 2 question"
 
+def test_baseline_agent_ase_rag_retrieval(mocker):
+    agent = SingleShotAgent()
+    mock_retrieve = mocker.patch.object(agent, "retrieve_ase_docs", return_value="ASE neighbor_list documentation snippet")
+    
+    captured_payload = {}
+    def mock_post(url, json=None, **kwargs):
+        nonlocal captured_payload
+        captured_payload = json
+        mock_resp = mocker.MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"response": "Use neighbor_list('ijd', atoms, cutoff=3.0)"}
+        return mock_resp
+    mocker.patch("requests.post", side_effect=mock_post)
+
+    res = agent.generate_response("How to use ASE neighbor_list in molecular simulations?")
+    assert res["status"] == "success"
+    assert mock_retrieve.called
+    assert "ASE neighbor_list documentation snippet" in captured_payload["messages"][0]["content"]
+
+def test_baseline_agent_web_search_tools(mocker):
+    agent = SingleShotAgent()
+    mock_search = mocker.patch.object(agent, "search_web", return_value=[
+        {"title": "ASE Docs", "href": "https://wiki.fysik.dtu.dk/ase/", "body": "Atomic Simulation Environment guide"}
+    ])
+    
+    captured_payload = {}
+    def mock_post(url, json=None, **kwargs):
+        nonlocal captured_payload
+        captured_payload = json
+        mock_resp = mocker.MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"response": "Here is the online info."}
+        return mock_resp
+    mocker.patch("requests.post", side_effect=mock_post)
+
+    res = agent.generate_response("Search the web for latest ASE VelocityVerlet documentation")
+    assert res["status"] == "success"
+    assert mock_search.called
+    sys_content = captured_payload["messages"][0]["content"]
+    assert "retrieved_web_search_results" in sys_content
+    assert "https://wiki.fysik.dtu.dk/ase/" in sys_content
+
+def test_baseline_agent_read_url_content(mocker):
+    agent = SingleShotAgent()
+    mock_read = mocker.patch.object(agent, "read_url_content", return_value="ASE documentation from website.")
+    
+    captured_payload = {}
+    def mock_post(url, json=None, **kwargs):
+        nonlocal captured_payload
+        captured_payload = json
+        mock_resp = mocker.MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"response": "Parsed documentation."}
+        return mock_resp
+    mocker.patch("requests.post", side_effect=mock_post)
+
+    res = agent.generate_response("Check https://wiki.fysik.dtu.dk/ase/tutorials/md/md.html for MD parameters")
+    assert res["status"] == "success"
+    assert mock_read.called
+    sys_content = captured_payload["messages"][0]["content"]
+    assert "retrieved_url_content" in sys_content
+    assert "ASE documentation from website." in sys_content
+
+def test_baseline_agent_sandbox_failure_web_diagnosis(mocker):
+    mock_resp = mocker.MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "response": "```python\nimport non_existent_package\nprint('Running simulation')\nprint('Done')\n```",
+        "total_duration": 100,
+        "eval_count": 10
+    }
+    mocker.patch("requests.post", return_value=mock_resp)
+    
+    mocker.patch("backend.tools.sandbox_tools.run_python_in_sandbox", return_value={
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "ModuleNotFoundError: No module named 'non_existent_package'",
+        "artifacts": []
+    })
+    
+    agent = SingleShotAgent()
+    mock_search = mocker.patch.object(agent, "search_web", return_value=[
+        {"title": "Fix ModuleNotFoundError", "href": "https://pypi.org", "body": "Install package via pip"}
+    ])
+
+    res = agent.generate_response("Run this code in docker", run_sandbox=True)
+    assert res["status"] == "success"
+    assert mock_search.called
+    assert "Failed (Exit Code 1)" in res["response"]
+    assert "Web Diagnostic Insights" in res["response"]
+    assert "Fix ModuleNotFoundError" in res["response"]
+
+

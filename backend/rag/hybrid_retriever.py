@@ -32,6 +32,8 @@ class HybridRetriever:
             return {"domain": "DeepMD Training"}
         if any(w in q for w in ["survival probability", "cus", "o_adb", "o_br", "hydroxyl", "residence time", "simulation_results.npz"]):
             return {"domain": "Interfacial Analysis"}
+        if any(w in q for w in ["ase", "neighbor_list", "atoms.", "get_positions", "get_distance", "natural_cutoffs", "velocityverlet", "langevin"]):
+            return {"domain": "ASE Documentation"}
         return None
 
     @staticmethod
@@ -102,6 +104,16 @@ class HybridRetriever:
                 "- Mass Density Formula (g/cm³): `((count / 6.023e23) * 18.01528) / (volume * 1e-24)` where `volume = cell[0][0] * cell[1][1] * bin_width`.",
                 "- Hydroxylation Classification: `neighbor_list('ijd', frame, {('O', 'H'): 1.2}, self_interaction=False)` -> 1 H neighbor = Dissociated (`OH`/`OD`), 2 H neighbors = Molecular (`H2O`/`D2O`).",
                 "- Continuous Survival Probability `P(t)`: `len(set.intersection(*oh_sets[j:j+tau+1])) / len(oh_sets[j])`, integrated via `np.trapezoid(surv * times, times) / np.trapezoid(surv, times)`."
+            ])
+
+        if any(w in q_lower for w in ["ase", "neighbor_list", "atomic simulation environment", "trajectory", "atoms"]):
+            kg_facts.extend([
+                "- ASE Single Frame vs Trajectory: `atoms = read(path, index=0); atoms.set_pbc(True)` returns `Atoms`; `traj = read(path, index=':')` returns `list[Atoms]` (must unpack before `.get_positions()`).",
+                "- ASE Neighbor Finding: `neighbor_list('ijd', atoms, cutoff=...)` returns 3 1D arrays `(i, j, d)`; pair-specific cutoffs: `neighbor_list('ij', atoms, cutoff={('O', 'H'): 1.25})`.",
+                "- Individual Atom vs Atoms: An individual `atom` from `for atom in atoms` has `.position` (shape (3,)), NOT `.get_positions()` or `.get_neighbors()`.",
+                "- Periodic Minimum Image Convention (MIC): `atoms.get_distance(i, j, mic=True)`, `atoms.get_all_distances(mic=True)`, `atoms.get_angle(a1, a2, a3, mic=True)`.",
+                "- Molecular Dynamics Integrators: `Langevin(atoms, timestep=dt, temperature_K=T, friction=gamma)`, `VelocityVerlet(atoms, timestep=dt)`.",
+                "- Geometry Optimization: `BFGS(atoms, trajectory='opt.traj').run(fmax=0.02)`."
             ])
 
         # 2. Filtered Vector Search (Skip redundant retrieval if molecular extxyz isolation rule applies)

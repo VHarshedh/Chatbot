@@ -6,11 +6,22 @@ class KnowledgeGraph:
     _instance = None
 
     def __init__(self):
-        # Initialize Kuzu Database
-        self.db = kuzu.Database(settings.KUZU_DB_DIR)
-        self.conn = kuzu.Connection(self.db)
-        self._init_schema()
-        self.init_domain_data()
+        # Initialize Kuzu Database with read-only fallback on concurrent lock
+        try:
+            self.db = kuzu.Database(settings.KUZU_DB_DIR)
+            self.conn = kuzu.Connection(self.db)
+            self._init_schema()
+            self.init_domain_data()
+        except RuntimeError as e:
+            if "lock" in str(e).lower():
+                try:
+                    self.db = kuzu.Database(settings.KUZU_DB_DIR, read_only=True)
+                    self.conn = kuzu.Connection(self.db)
+                except Exception:
+                    self.db = None
+                    self.conn = None
+            else:
+                raise
 
     @classmethod
     def get_instance(cls):

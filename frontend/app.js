@@ -951,7 +951,7 @@ function confirmResetPrompts() {
 }
 
 // =============================================================================
-// Gemini 3.8 Flash Code Evaluation Engine
+// Gemini Code Evaluation Engine
 // =============================================================================
 
 function extractCodeFromMessage(text) {
@@ -1021,7 +1021,7 @@ function createGeminiReportCardElement(evalData, codeText = "", userPrompt = "")
       <div class="gemini-card-title-group">
         <div class="gemini-eval-badge-icon" aria-hidden="true">⚖️</div>
         <div class="gemini-eval-title-text">
-          <h4>Gemini 3.5 Flash Lite Code Audit</h4>
+          <h4>Gemini Code Audit</h4>
           <div class="gemini-eval-meta">
             <span>Model: <strong>${escapeHtml(modelName)}</strong></span>
             ${latency ? `<span>• ⚡ ${latency}</span>` : ""}
@@ -1039,6 +1039,9 @@ function createGeminiReportCardElement(evalData, codeText = "", userPrompt = "")
     </div>
 
     <div class="gemini-summary-box">
+      <p><strong>Static code review</strong> • Execution: ${escapeHtml(evalData.execution_status || "Untested")}. Supplied logs are unverified.</p>
+      ${evalData.score_cap != null ? `<p>Blocking defect: score capped at ${evalData.score_cap}/100 (category subtotal: ${evalData.raw_score}).</p>` : ""}
+      ${evalData.persistence_error ? `<p>${escapeHtml(evalData.persistence_error)}</p>` : ""}
       <strong>Executive Critique:</strong> ${escapeHtml(evalData.summary || "Evaluation completed.")}
     </div>
 
@@ -1088,7 +1091,7 @@ function createGeminiReportCardElement(evalData, codeText = "", userPrompt = "")
   if (strengths.length > 0) {
     html += `
       <div class="gemini-strengths-section">
-        <div class="gemini-section-header header-success">✔️ Strengths & Verified Implementations (${strengths.length})</div>
+        <div class="gemini-section-header header-success">✔️ Strengths Identified in Review (${strengths.length})</div>
         <ul class="gemini-detail-list gemini-strengths-list">
           ${strengths.map(s => `<li><span>•</span><span>${escapeHtml(s)}</span></li>`).join("")}
         </ul>
@@ -1109,7 +1112,7 @@ function createGeminiReportCardElement(evalData, codeText = "", userPrompt = "")
 
   html += `
     <div class="gemini-card-footer">
-      <span>${evalData.evaluation_id ? `Audit Run #${evalData.evaluation_id}` : 'Instant Assessment'} • Extreme Prejudice Metric</span>
+      <span>${evalData.evaluation_id ? `Audit Run #${evalData.evaluation_id}` : 'Instant Assessment'} • Evidence-based static review</span>
       <span>${evalData.execution_status ? `Execution: ${escapeHtml(evalData.execution_status)}` : 'Grounded on Task'}</span>
     </div>
   `;
@@ -1132,13 +1135,13 @@ function attachGeminiEvaluateButton(bubble, content, promptText = "", sessionId 
 
   container.innerHTML = `
     <div class="gemini-eval-btn-wrapper">
-      <button class="btn-gemini-eval" type="button" title="Evaluate script with Gemini 3.5 Flash Lite (Strict 100-pt rubric)">
+      <button class="btn-gemini-eval" type="button" title="Evaluate script with Gemini (Strict 100-pt rubric)">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
           <path d="M12 3v18M18 6l-6-3-6 3M18 18l-6 3-6-3M6 10l-4 2 4 2M18 10l4 2-4 2" />
         </svg>
-        <span>Evaluate Script (Gemini 3.5 Flash Lite)</span>
+        <span>Evaluate Script (Gemini)</span>
       </button>
-      <span class="gemini-eval-hint">Strict 100-pt audit • Extreme prejudice</span>
+      <span class="gemini-eval-hint">Strict 100-pt audit • Static review</span>
     </div>
     <div class="gemini-eval-result-host" style="display:none;"></div>
   `;
@@ -1150,7 +1153,7 @@ function attachGeminiEvaluateButton(bubble, content, promptText = "", sessionId 
     btn.disabled = true;
     btn.classList.add("is-loading");
     const btnSpan = btn.querySelector("span");
-    btnSpan.textContent = "Evaluating with Gemini 3.5 Flash Lite...";
+    btnSpan.textContent = "Evaluating with Gemini...";
 
     try {
       const taskPrompt = promptText || getLastUserPrompt();
@@ -1158,7 +1161,7 @@ function attachGeminiEvaluateButton(bubble, content, promptText = "", sessionId 
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          code: extractedCode,
+          code: content,
           prompt: taskPrompt,
           execution_output: dockerOut,
           session_id: sessionId || currentSessionId
@@ -1177,7 +1180,7 @@ function attachGeminiEvaluateButton(bubble, content, promptText = "", sessionId 
 
       btn.classList.remove("is-loading");
       btn.disabled = false;
-      btnSpan.textContent = "🔄 Re-evaluate with Gemini 3.5 Flash Lite";
+      btnSpan.textContent = "🔄 Re-evaluate with Gemini";
 
       await loadEvaluationHistory();
       scrollToBottom(false);

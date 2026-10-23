@@ -3,7 +3,7 @@ import requests
 from backend.config import settings
 from backend.rag.hybrid_retriever import HybridRetriever
 from backend.tools.sandbox_tools import run_python_in_sandbox
-from backend.tools.web_tools import search_web
+from backend.tools.web_tools import search_web, read_url_content
 
 ANALYSIS_SYSTEM_PROMPT = (
     "SYSTEM DIRECTIVE: You are an expert computational materials scientist and autonomous Python developer "
@@ -45,6 +45,14 @@ class AnalysisAgent:
         self.retriever = HybridRetriever()
         self.model = settings.MODEL_NAME
         self.base_url = settings.OLLAMA_BASE_URL
+
+    def search_web(self, query: str, max_results: int = 3) -> list:
+        """Searches the web via DuckDuckGo."""
+        return search_web(query, max_results=max_results)
+
+    def read_url_content(self, url: str) -> str:
+        """Fetches and extracts text from a specified URL."""
+        return read_url_content(url)
         
     def _call_llm(self, prompt: str, system_prompt: Optional[str] = None) -> str:
         try:
