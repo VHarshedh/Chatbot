@@ -1376,7 +1376,9 @@ function renderAgentTraceStep(container, stepEvent) {
   if (!container) return;
   container.style.display = "flex";
 
-  const stepKey = stepEvent.step || "step";
+  const baseStep = stepEvent.step || "step";
+  const iterationKey = stepEvent.iteration ?? stepEvent.attempt;
+  const stepKey = iterationKey == null ? baseStep : `${baseStep}_${iterationKey}`;
   let stepEl = container.querySelector(`[data-step="${stepKey}"]`);
   
   let icon = "⚡";
@@ -1387,7 +1389,8 @@ function renderAgentTraceStep(container, stepEvent) {
   else if (stepKey.startsWith("synthesis")) icon = "🧠";
 
   const statusClass = stepEvent.status || "running";
-  const titleText = stepEvent.title || "Agent Execution Step";
+  const baseTitle = stepEvent.title || "Agent Execution Step";
+  const titleText = iterationKey == null ? baseTitle : `${baseTitle} · ${stepEvent.iteration != null ? "Repair" : "Attempt"} ${iterationKey}`;
 
   if (!stepEl) {
     stepEl = document.createElement("div");
@@ -1426,9 +1429,33 @@ function renderAgentTraceStep(container, stepEvent) {
   }
 }
 
+let activeChat = null;
+const stopChatButton = document.getElementById("stop-chat-btn");
+const sendChatButton = document.getElementById("send-btn");
+stopChatButton.addEventListener("click", async () => {
+  const run = activeChat;
+  if (!run || run.stopping) return;
+  run.stopping = true;
+  stopChatButton.disabled = true;
+  stopChatButton.textContent = "Stopping…";
+  try {
+    const response = await fetch(`/api/chat/${run.requestId}/stop`, { method: "POST", signal: AbortSignal.timeout(10000) });
+    if (!response.ok) throw new Error("Stop request failed");
+    // Let the server save the interrupted response and send its stopped event.
+    if (activeChat === run) run.stopTimeout = setTimeout(() => run.controller.abort(), 5000);
+  } catch (error) {
+    if (activeChat !== run) return;
+    run.stopping = false;
+    stopChatButton.disabled = false;
+    stopChatButton.textContent = "Retry stop";
+    run.timerBadge.textContent = "Could not stop yet. Retry Stop.";
+  }
+});
+
 // Chat Submission with Real-Time Token Streaming & Mode Dispatch
 chatForm.addEventListener("submit", async (e) => {
   e.preventDefault();
+  if (activeChat) return;
   const text = promptInput.value.trim();
   if (!text && attachedImages.length === 0) return;
   const imagesToSend = attachedImages.map((i) => i.dataUrl);
@@ -1488,9 +1515,16 @@ chatForm.addEventListener("submit", async (e) => {
   contentContainer.innerHTML = getPrefillPlaceholderHtml(isAgentic);
   let hasReceivedFirstToken = false;
 
+  const run = { requestId: crypto.randomUUID(), controller: new AbortController(), stopping: false, timerBadge };
+  activeChat = run;
+  sendChatButton.disabled = true;
+  stopChatButton.hidden = false;
+  stopChatButton.disabled = false;
+  stopChatButton.textContent = "■ Stop";
   const startTime = Date.now();
   const timerInterval = setInterval(() => {
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    if (run.stopping) { timerBadge.textContent = "Stopping…"; return; }
     timerBadge.textContent = isAgentic
       ? `🧠 Agentic Workflow... ${elapsed}s`
       : `⏳ Streaming... ${elapsed}s`;
@@ -1498,10 +1532,12 @@ chatForm.addEventListener("submit", async (e) => {
 
   try {
     const response = await fetch("/api/chat/stream", {
+      signal: run.controller.signal,
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         message: text,
+        request_id: run.requestId,
         session_id: currentSessionId,
         mode: isAgentic ? "agentic" : "single_shot",
         ...(imagesToSend.length > 0 ? { images: imagesToSend } : {})
@@ -1520,6 +1556,7 @@ chatForm.addEventListener("submit", async (e) => {
     const decoder = new TextDecoder();
     let buffer = "";
     let thinkingAccumulated = "";
+    let lastRepairThinkingIteration = null;
     let contentAccumulated = "";
 
     while (true) {
@@ -1554,6 +1591,10 @@ chatForm.addEventListener("submit", async (e) => {
               contentContainer.innerHTML = "";
             }
             thinkingDetails.style.display = "block";
+            if (event.phase === "repair" && event.iteration !== lastRepairThinkingIteration) {
+              thinkingAccumulated += `\n\n### Debugging iteration ${event.iteration}\n`;
+              lastRepairThinkingIteration = event.iteration;
+            }
             thinkingAccumulated += event.delta;
             thinkingContent.innerHTML = renderThinkingBody(thinkingAccumulated);
             const words = thinkingAccumulated.split(/\s+/).filter(Boolean).length;
@@ -1586,6 +1627,10 @@ chatForm.addEventListener("submit", async (e) => {
               bubble.insertBefore(gallery, cursor);
               scrollToBottom(false);
             }
+          } else if (event.type === "stopped") {
+            run.stopping = true;
+            if (event.session_id) currentSessionId = event.session_id;
+            run.controller.abort();
           } else if (event.type === "done") {
             clearInterval(timerInterval);
             if (cursor) cursor.remove();
@@ -1630,8 +1675,27 @@ chatForm.addEventListener("submit", async (e) => {
   } catch (err) {
     clearInterval(timerInterval);
     if (cursor) cursor.remove();
-    contentContainer.innerHTML = `<span style="color:var(--color-danger)"><strong>Network Error:</strong> Could not connect to API (${escapeHtml(err.message)})</span>`;
+    if (!run.stopping) contentContainer.innerHTML = `<span style="color:var(--color-danger)"><strong>Network Error:</strong> Could not connect to API (${escapeHtml(err.message)})</span>`;
     scrollToBottom();
+  } finally {
+    clearInterval(timerInterval);
+    clearTimeout(run.stopTimeout);
+    if (cursor) cursor.remove();
+    if (run.stopping) {
+      timerBadge.textContent = "Stopped — send your guidance below";
+      if (!hasReceivedFirstToken) contentContainer.innerHTML = "";
+      const note = document.createElement("p");
+      note.className = "message-meta";
+      note.textContent = "Stopped by you. Your partial response is kept; send your guidance to continue.";
+      bubble.appendChild(note);
+      agentTraceContainer.querySelectorAll(".running").forEach(el => el.classList.remove("running"));
+    }
+    if (activeChat === run) {
+      activeChat = null;
+      sendChatButton.disabled = false;
+      stopChatButton.hidden = true;
+      promptInput.focus();
+    }
   }
 });
 
@@ -1646,7 +1710,8 @@ function appendMessage(role, content, meta = {}) {
   // If this message has stored tool/agent trace steps, display them at the top of the bubble
   if (role === "assistant" && meta.tool_calls_json) {
     try {
-      const steps = typeof meta.tool_calls_json === "string" ? JSON.parse(meta.tool_calls_json) : meta.tool_calls_json;
+      const storedTrace = typeof meta.tool_calls_json === "string" ? JSON.parse(meta.tool_calls_json) : meta.tool_calls_json;
+      const steps = (Array.isArray(storedTrace) ? storedTrace : (storedTrace.execution_events || [])).filter(step => step.type === "agent_step" || step.step);
       if (Array.isArray(steps) && steps.length > 0) {
         const traceContainer = document.createElement("div");
         traceContainer.className = "agent-trace-container";

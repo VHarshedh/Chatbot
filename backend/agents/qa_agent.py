@@ -1,5 +1,6 @@
 import re
 import requests
+from backend.agents.cancellation import cancellable_post
 from backend.config import settings
 from backend.rag.hybrid_retriever import HybridRetriever
 from backend.tools.web_tools import search_web, read_url_content
@@ -76,7 +77,7 @@ Provide an authoritative, direct scientific answer:"""
             {"role": "user", "content": user_prompt}
         ]
         try:
-            response = requests.post(
+            response = cancellable_post(
                 f"{self.base_url}/api/chat",
                 json={
                     "model": self.model,
@@ -106,7 +107,7 @@ Provide an authoritative, direct scientific answer:"""
                     "prompt": f"{QA_SYSTEM_PROMPT}\n\n{user_prompt}",
                     "stream": False
                 }
-                fallback_res = requests.post(
+                fallback_res = cancellable_post(
                     f"{self.base_url}/api/generate",
                     json=gen_payload,
                     timeout=120

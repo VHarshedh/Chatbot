@@ -8,6 +8,8 @@ def run_python_in_sandbox(code: str, data_mount_path=None, user_prompt: str = ""
     validation = validate_scientific_script_ast(code, user_prompt)
     if not validation["valid"]:
         return {"stdout": "", "stderr": "Static validation failed: " + "; ".join(validation["issues"]), "exit_code": 2, "artifacts": [], "validation": validation}
+    from backend.agents.cancellation import check_cancelled
+    check_cancelled()
     result = SandboxExecutor().run_python_script(code, data_mount_path)
     if result.get("exit_code") == 0:
         metadata = inspect_structure_metadata(data_mount_path) if isinstance(data_mount_path, str) else {}
@@ -23,6 +25,8 @@ def run_python_in_sandbox(code: str, data_mount_path=None, user_prompt: str = ""
 
 def run_bash_in_sandbox(script: str, data_mount_path: Optional[str] = None) -> Dict:
     """Executes a bash script inside the Docker Sandbox"""
+    from backend.agents.cancellation import check_cancelled
+    check_cancelled()
     executor = SandboxExecutor()
     # To run bash, we can wrap the python executor or add a specific bash method to it
     # Here we simulate it by wrapping the bash command in a python subprocess for simplicity,

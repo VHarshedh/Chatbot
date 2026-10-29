@@ -62,6 +62,7 @@ def inspect_local_python_api(symbol_path):
 
 def local_error_context(code, stderr):
     symbols = []
+    missing_property = 'forces' in stderr.lower() and ('not available' in stderr.lower() or 'not implemented' in stderr.lower())
     try:
         tree = ast.parse(code)
         for node in ast.walk(tree):
@@ -73,7 +74,14 @@ def local_error_context(code, stderr):
         symbols.insert(0, 'ase.neighborlist.neighbor_list')
     if 'get_all_distances' in code:
         symbols.insert(0, 'ase.Atoms.get_all_distances')
-    return '\n\n'.join(inspect_local_python_api(s) for s in dict.fromkeys(symbols[:3]))
+    context = '\n\n'.join(inspect_local_python_api(s) for s in dict.fromkeys(symbols[:3]))
+    if missing_property:
+        context = ("ASE force availability: a structure file may contain geometry without forces. "
+                   "Do not call get_forces() for geometry-only analysis. If forces are required, "
+                   "use actual stored force arrays or a scientifically appropriate configured calculator; "
+                   "never fabricate forces, substitute zeros, or suppress a required calculation. "
+                   "Keep the original requested outputs.\n" + context)
+    return context
 
 
 def artifact_metadata(paths):
@@ -95,8 +103,30 @@ def artifact_metadata(paths):
     return result
 
 
+def execution_error_messages(stdout="", stderr=""):
+    """Detect explicit failure reports, including exceptions caught and printed by scripts.
+
+    Warnings and numeric error metrics are not execution failures.
+    """
+    patterns = (
+        r"\b(?:an?\s+)?(?:error|exception)\s+(?:has\s+)?occurred\b",
+        r"^\s*(?:error|fatal|exception|failure)\s*:",
+        r"\b(?:error|exception)\s+(?:during|while|in processing)\b",
+        r"^\s*Traceback \(most recent call last\):",
+        r"\b[A-Za-z_][\w.]*(?:Error|Exception)\s*:",
+        r"^\s*(?:(?:processing|execution|analysis|calculation|script)\s+failed\b|failed\s+to\b)",
+        r"\bthe property [\"']?\w+[\"']? is not available\b",
+    )
+    messages = []
+    for stream in (stdout or "", stderr or ""):
+        for line in stream.splitlines():
+            if any(re.search(pattern, line, re.I) for pattern in patterns):
+                messages.append(line.strip()[:2000])
+    return list(dict.fromkeys(messages))
+
+
 def audit_sandbox_execution_result(stdout, stderr, artifacts, user_prompt='', structure_metadata=None):
-    issues = []
+    issues = ["Execution reported an error: " + message for message in execution_error_messages(stdout, stderr)]
     if re.search(r'(?im)^\s*Error:|no boundary atoms|no crystal-water interactions|skipping plot generation', stdout):
         issues.append('Output reports a failed or empty scientific result.')
     if re.search(r'SyntaxWarning|invalid escape sequence', stderr):

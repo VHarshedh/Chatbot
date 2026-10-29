@@ -66,3 +66,27 @@ RDF peaks, continuous survival, disjoint training sets, static/output validation
 stream separation, multiple input mounts, and isolated Docker CLI fallback tests.
 Focused runs use `--no-cov` because the repository's default 95% coverage requirement
 applies to the entire backend, not a selected regression subset.
+
+All code-executing agents (AgenticRAGAgent, AnalysisAgent, and SingleShotAgent's
+streaming and synchronous paths) share `backend.agents.execution_repair`.
+The initial execution can be followed by up to five model-generated corrections,
+for at most six executions. Each correction receives the original request,
+current script, previous failures, stdout/stderr, audit details, and local API
+references. Each corrected script is executed again. Runtime failures, static
+validation failures, and output-audit failures all trigger repair. The loop stops
+on validated success, exhaustion, or a model repair error; the last executed
+script/result is retained. Failed attempts are not indexed as verified memory.
+QAAgent answers questions without executing code and has no sandbox retry path.
+
+Caught exceptions printed to stdout/stderr (including "An error occurred during processing" and missing ASE force properties) are treated as execution failures even when the process exits zero. The shared repair loop independently checks raw streams so a successful runner flag cannot bypass this check. Repair prompts explain that geometry-only tasks do not require forces and prohibit fabricated force data.
+
+Repair requests stream model-provided thinking and code through the same SSE event types as initial generation. Per-iteration API lookup/tool events and Docker attempts have separate UI trace identities. No thinking or web calls are fabricated when the model/tool has not produced them. Saved chat responses retain repair code/thinking and available execution traces.
+
+The chat composer offers Stop during streaming responses. It cancels the request's
+backend generation, closes active model HTTP streams, and prevents additional
+repair attempts. Active SDK sandbox containers are removed; CLI sandbox processes
+and their named containers are cleaned up. Partial output is saved with an explicit
+stopped marker and excluded from verified memory. Follow-up guidance uses the same
+session. Cancellation state is process-local: run one API worker, or supply a
+shared cancellation registry when deploying multiple workers. The browser retains
+typed follow-up guidance while stopping, then restores Send.

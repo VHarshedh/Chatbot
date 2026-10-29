@@ -774,7 +774,7 @@ def build_patched_modelfile(orig_modelfile: str, orig_blob_path: Path, patched_g
 
     out_lines.append("PARAMETER temperature 0.1")
     out_lines.append("PARAMETER top_p 0.90")
-    out_lines.append("PARAMETER num_ctx 8192")
+    out_lines.append("PARAMETER num_ctx 32768")
     out_lines.append(f'SYSTEM """{UNIFIED_SYSTEM_PROMPT}"""')
 
     modelfile_patched = MERGED_ADAPTER_DIR / "Modelfile.batiai_patched"

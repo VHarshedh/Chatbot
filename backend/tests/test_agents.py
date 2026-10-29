@@ -76,7 +76,8 @@ def test_analysis_agent_single_line_error_no_index_error(mocker):
     agent = AnalysisAgent()
     res = agent.run_analysis("test single line error")
     assert res["status"] == "success"
-    assert mock_web.called
+    assert res["attempts"] == 2
+    mock_web.assert_not_called()
 
 def test_qa_agent_exception(mocker):
     mock_retriever = mocker.patch("backend.agents.qa_agent.HybridRetriever")

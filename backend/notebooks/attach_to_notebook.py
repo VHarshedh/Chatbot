@@ -272,6 +272,27 @@ def format_anatase_extxyz_context_prompt() -> str:
     )
 
 
+def format_pure_anatase_extxyz_context_prompt() -> str:
+    """
+    Formats the context prompt for pure anatase_tio2.extxyz (water molecules removed).
+    """
+    return (
+        "### AVAILABLE STRUCTURE FILE: `anatase_tio2.extxyz`\n"
+        "- Docker Sandbox Mount Path: `/mnt/data/anatase_tio2.extxyz`\n"
+        "- Host/Workspace Fallback Path: `public/anatase_tio2.extxyz`\n"
+        "- Physical System: Pure Anatase TiO2 crystal slab without water (60 Ti, 120 O, 180 total atoms).\n\n"
+        "CANONICAL ASE & PYTHON RULES:\n"
+        "1. Loading Structure:\n"
+        "   `atoms = read(file_path, index=0); atoms.set_pbc(True)`\n"
+        "   `positions = atoms.get_positions(); symbols = np.array(atoms.get_chemical_symbols())`\n"
+        "2. Reading Forces and Header Properties:\n"
+        "   - Forces are stored in the extxyz data and can be accessed via `atoms.get_forces()` or `atoms.arrays['force']`.\n"
+        "3. Headless Plotting:\n"
+        "   - Save figures with `plt.savefig(..., dpi=300, bbox_inches='tight')` and `plt.close()`.\n"
+        "4. Output Contract: Output ONLY the executable ```python ... ``` code block. NEVER fabricate simulated console output.\n"
+    )
+
+
 def _resolve_prompt_context(raw_text: str, notebook_path: Optional[str] = None) -> Dict[str, Any]:
     """
     Evaluates user prompt text against domain rules:
@@ -291,6 +312,24 @@ def _resolve_prompt_context(raw_text: str, notebook_path: Optional[str] = None) 
         if not data_file.exists():
             data_file = root_path / "ChatBot" / "public" / "Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz"
         
+        augmented = f"{extxyz_prompt}\n\n--- USER REQUEST ---\n{raw_text}"
+        return {
+            "augmented_prompt": augmented,
+            "matched_type": "extxyz",
+            "data_file_path": str(data_file) if data_file.exists() else None,
+            "notebook_context": None,
+            "attach_to_notebook": False
+        }
+
+    # Rule 1b: Pure Anatase TiO2 (water removed) -> provide pure anatase_tio2.extxyz location
+    p_lower = p.lower()
+    if "anatase_tio2.extxyz" in p_lower or ("anatase" in p_lower and ("tio2" in p_lower or "ti02" in p_lower) and "extxyz" in p_lower and not any(kw in p_lower for kw in ["water", "h2o", "molecular", "adsorbed"])):
+        extxyz_prompt = format_pure_anatase_extxyz_context_prompt()
+        root_path = Path(__file__).resolve().parent.parent.parent
+        data_file = root_path / "public" / "anatase_tio2.extxyz"
+        if not data_file.exists():
+            data_file = root_path / "ChatBot" / "public" / "anatase_tio2.extxyz"
+
         augmented = f"{extxyz_prompt}\n\n--- USER REQUEST ---\n{raw_text}"
         return {
             "augmented_prompt": augmented,

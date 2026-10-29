@@ -2,6 +2,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import uuid
 from typing import Dict, Optional, List
 
 try:
@@ -135,6 +136,9 @@ class SandboxExecutor:
                         detach=True,
                         remove=False
                     )
+                    from backend.agents.cancellation import on_cancel, check_cancelled
+                    on_cancel(lambda: container.remove(force=True))
+                    check_cancelled()
                     result = container.wait(timeout=120)
                     exit_code = result.get('StatusCode', 1)
                     stdout = container.logs(stdout=True, stderr=False).decode('utf-8', errors='replace')
@@ -154,7 +158,8 @@ class SandboxExecutor:
                 convert_path = _win_to_wsl_path if self.wsl_available else os.path.abspath
                 wsl_workspace = convert_path(workspace_dir)
                 prefix = ["wsl", "-d", "Ubuntu", "docker"] if self.wsl_available else ["docker"]
-                cmd = prefix + ["run", "--rm",
+                container_name = "chatbox-" + uuid.uuid4().hex
+                cmd = prefix + ["run", "--rm", "--name", container_name,
                     "--network", "none",
                     "--memory", "2g",
                     "--pids-limit", "50",
@@ -176,7 +181,9 @@ class SandboxExecutor:
                 cmd.extend([self.image_name, "python", "/tmp/workspace/script.py"])
 
                 try:
-                    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+                    from backend.agents.cancellation import run_cancellable_process
+                    proc = run_cancellable_process(cmd, timeout=120,
+                        cleanup=lambda: subprocess.run(prefix + ["rm", "-f", container_name], capture_output=True, timeout=10))
                     exit_code = proc.returncode
                     stdout, stderr = proc.stdout, proc.stderr
                 except Exception as e:

@@ -29,12 +29,31 @@ def resolve_structure_paths(prompt):
             continue
         for path in base.iterdir():
             if path.is_file() and path.suffix.lower() in {'.extxyz', '.xyz', '.cif', '.lmp', '.traj'}:
-                if path.name.lower() in prompt.lower():
+                p_lower = prompt.lower()
+                if path.name.lower() in p_lower:
                     paths.append(str(path))
+                elif re.search(rf"(?<![a-zA-Z0-9_]){re.escape(path.stem.lower())}(?![a-zA-Z0-9_])", p_lower):
+                    paths.append(str(path))
+    paths = list(dict.fromkeys(paths))
+    if len(paths) > 1:
+        has_water = bool(re.search(r'\b(water|h2o|molecular|adsorb\w*|interfac\w*)\b', prompt, re.I))
+        disambiguated = [p for p in paths if ("water" in Path(p).name.lower()) == has_water]
+        if disambiguated:
+            paths = disambiguated
+
     if not paths and re.search(r'\banatase\b|\btio2\b', prompt, re.I):
-        path = root/'public'/'Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz'
-        if path.exists():
-            paths.append(str(path))
+        if re.search(r'\b(water|h2o|molecular|adsorb\w*|interfac\w*)\b', prompt, re.I):
+            water_path = root/'public'/'Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz'
+            if water_path.exists():
+                paths.append(str(water_path))
+        else:
+            pure_path = root/'public'/'anatase_tio2.extxyz'
+            if pure_path.exists():
+                paths.append(str(pure_path))
+            else:
+                water_path = root/'public'/'Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz'
+                if water_path.exists():
+                    paths.append(str(water_path))
     return paths
 
 

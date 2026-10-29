@@ -1,5 +1,6 @@
 from typing import Optional
 import requests
+from backend.agents.cancellation import cancellable_post
 from backend.config import settings
 from backend.rag.hybrid_retriever import HybridRetriever
 from backend.tools.sandbox_tools import run_python_in_sandbox
@@ -56,7 +57,7 @@ class AnalysisAgent:
         """Fetches and extracts text from a specified URL."""
         return read_url_content(url)
         
-    def _call_llm(self, prompt: str, system_prompt: Optional[str] = None) -> str:
+    def _call_llm(self, prompt: str, system_prompt: Optional[str] = None, stream: bool = False) -> str:
         try:
             messages = []
             if system_prompt:
@@ -67,19 +68,22 @@ class AnalysisAgent:
                 "model": self.model,
                 "keep_alive": settings.OLLAMA_KEEP_ALIVE,
                 "messages": messages,
-                "stream": False,
+                "stream": stream,
                 "options": {
                     "num_ctx": settings.NUM_CTX,
                     "temperature": 0.1,
                     "num_gpu": settings.NUM_GPU,
                 }
             }
-            response = requests.post(
+            response = cancellable_post(
                 f"{self.base_url}/api/chat",
                 json=payload,
-                timeout=120
+                timeout=120, stream=stream
             )
             response.raise_for_status()
+            if stream:
+                from backend.agents.execution_repair import stream_repair_response
+                return stream_repair_response(response)
             data = response.json()
             if "message" in data:
                 return data["message"].get("content", "")
@@ -91,9 +95,9 @@ class AnalysisAgent:
                     "model": self.model,
                     "keep_alive": settings.OLLAMA_KEEP_ALIVE,
                     "prompt": f"{system_prompt}\n\n{prompt}" if system_prompt else prompt,
-                    "stream": False
+                    "stream": stream
                 }
-                fallback_res = requests.post(
+                fallback_res = cancellable_post(
                     f"{self.base_url}/api/generate",
                     json=gen_payload,
                     timeout=120
@@ -131,53 +135,17 @@ Output the executable Python script in a ```python ... ``` block:"""
         # Clean markdown code blocks if the LLM output them anyway
         code = code.replace("```python", "").replace("```", "").strip()
 
-        # 3. Execution & Self-Correction Loop
-        max_retries = 3
-        for attempt in range(max_retries):
-            print(f"Executing script (Attempt {attempt+1}/{max_retries})...")
-            result = run_python_in_sandbox(code, data_mount_path=data_path, user_prompt=user_request)
-            
-            if result["exit_code"] == 0:
-                print("Execution successful!")
-                return {
-                    "status": "success",
-                    "stdout": result["stdout"],
-                    "artifacts": result["artifacts"],
-                    "code_used": code
-                }
-            
-            print(f"Execution failed with code {result['exit_code']}. Stderr: {result['stderr']}")
-            
-            # Optional: Use web search if the error is tricky
-            if "AttributeError" in result['stderr'] or "ImportError" in result['stderr']:
-                err_lines = [line.strip() for line in result["stderr"].splitlines() if line.strip()]
-                search_query = err_lines[-1] if err_lines else "Python ASE AttributeError"
-                web_context = local_error_context(code, result["stderr"]) or search_web(f"Python {search_query} solution", max_results=2)
-            else:
-                web_context = "No additional web context retrieved."
-
-            # Fix code
-            fix_prompt = f"""The following Python script failed execution in the sandbox. Fix the script based on the error output and web search context.
-
-Original Code:
-{code}
-
-Error Output (stderr):
-{result['stderr']}
-
-Web Search Diagnostic Context:
-{web_context}
-
-Output the complete, corrected Python script:"""
-            print("Generating fix...")
-            code = self._call_llm(fix_prompt, system_prompt=ANALYSIS_FIX_SYSTEM_PROMPT)
-            code = code.replace("```python", "").replace("```", "").strip()
-            
-        return {
-            "status": "failed",
-            "stderr": result["stderr"],
-            "code_used": code
-        }
+        from backend.agents.execution_repair import execution_repairs
+        execution_events = []
+        for event in execution_repairs(code, user_request,
+                lambda script: run_python_in_sandbox(script, data_mount_path=data_path, user_prompt=user_request),
+                lambda prompt: self._call_llm(prompt, system_prompt=ANALYSIS_FIX_SYSTEM_PROMPT, stream=True)):
+            if event["type"] != "execution_result":
+                execution_events.append(event)
+            if event["type"] == "execution_result":
+                result = event["result"]
+                return {**result, "status": "success" if result.get("exit_code") == 0 else "failed",
+                        "code_used": event["code"], "attempts": event["attempts"], "repairs": event["repairs"], "execution_events": execution_events}
 
 if __name__ == "__main__": # pragma: no cover
     import sys

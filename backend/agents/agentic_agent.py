@@ -3,6 +3,7 @@ import json
 import re
 import time
 import requests
+from backend.agents.cancellation import cancellable_post
 from typing import Dict, Any, Generator, Optional, List
 from backend.config import settings
 from backend.rag.hybrid_retriever import HybridRetriever
@@ -148,7 +149,7 @@ class AgenticRAGAgent:
             "messages": messages,
             "stream": stream,
             "options": {
-                "num_ctx": settings.NUM_CTX,       # 8192 tokens
+                "num_ctx": max(settings.NUM_CTX, 32768) if (cleaned_imgs or any(isinstance(m, dict) and m.get("images") for m in messages)) else settings.NUM_CTX,
                 "num_predict": 4096,               # Cap generation at 4096 tokens to prevent runaway loops
                 "temperature": 0.15,               # Low temperature for deterministic syntax & math
                 "top_p": 0.90,                     # Nucleus sampling cutoff
@@ -157,7 +158,7 @@ class AgenticRAGAgent:
                 "num_gpu": settings.NUM_GPU
             }
         }
-        return requests.post(
+        return cancellable_post(
             f"{self.base_url}/api/chat",
             json=payload,
             stream=stream,
@@ -379,91 +380,40 @@ CRITICAL IMPLEMENTATION REQUIREMENTS:
                     except Exception:
                         pass
 
-                # Run in Docker Sandbox
-                sb_start = {"type": "agent_step", "step": "sandbox_start", "title": "Docker Sandbox Execution", "status": "running", "details": "Executing script inside isolated container (2GB RAM, no-net)..."}
-                trace_steps.append(sb_start)
-                yield f"data: {json.dumps(sb_start)}\n\n"
-                
-                sandbox_res = run_python_in_sandbox(code_extracted, data_mount_path=data_mount_path, user_prompt=user_message)
-                execution_exit_code = sandbox_res.get("exit_code")
-                if sandbox_res["exit_code"] == 0:
-                    sandbox_output = sandbox_res["stdout"]
-                    artifacts = sandbox_res.get("artifacts", [])
-                    artifact_names = [os.path.basename(a) for a in artifacts]
-                    if artifacts:
-                        yield f"data: {json.dumps({'type': 'artifacts', 'artifacts': artifact_names, 'artifact_paths': artifacts})}\n\n"
-                    details_str = f"Exit code 0 (Success). Output: {sandbox_output[:120]}"
-                    if artifact_names:
-                        details_str += f" | Generated: {', '.join(artifact_names)}"
-                    sb_done = {"type": "agent_step", "step": "sandbox_complete", "title": "Docker Sandbox Execution", "status": "completed", "details": details_str}
-                    trace_steps.append(sb_done)
-                    yield f"data: {json.dumps(sb_done)}\n\n"
-                else:
-                    stderr_snippet = sandbox_res.get("stderr", "Unknown error")
-                    sb_retry = {"type": "agent_step", "step": "sandbox_retry", "title": "Docker Sandbox Execution", "status": "warning", "details": f"Execution failed: {stderr_snippet[:150]}. Looking up installed scientific APIs..."}
-                    trace_steps.append(sb_retry)
-                    yield f"data: {json.dumps(sb_retry)}\n\n"
-                    
-                    # Web Search Tool invocation
-                    web_query = f"Python {stderr_snippet.splitlines()[-1]}" if stderr_snippet else "Python ASE simulation error"
-                    web_results = local_error_context(code_extracted, stderr_snippet)
-                    if not web_results:
-                        web_results = search_web(web_query, max_results=2)
-                    web_step = {"type": "agent_step", "step": "web_complete", "title": "API diagnostics", "status": "completed", "details": str(web_results)[:300]}
-                    trace_steps.append(web_step)
-                    yield f"data: {json.dumps(web_step)}\n\n"
-                    
-                    # Re-run fix
-                    fix_prompt = f"""The following script failed with stderr:
-{stderr_snippet}
-
-Web Search Context:
-{web_results}
-
-Original Code:
-{code_extracted}
-
-Write the corrected Python code block only."""
-                    fix_res = self._call_llm(
-                        fix_prompt,
-                        system_prompt=AGENTIC_FIX_SYSTEM_PROMPT,
-                        timeout=3600
-                    )
-                    fix_raw = fix_res.json().get("message", {}).get("content", "") if hasattr(fix_res, "json") else ""
-                    fixed_code_match = re.search(r"```(?:python)?\s*([\s\S]*?)```", fix_raw)
-                    if fixed_code_match:
-                        fixed_candidate = fixed_code_match.group(1).strip()
+                from backend.agents.execution_repair import execution_repairs, stream_repair_response
+                def repair_script(fix_prompt):
+                    response = self._call_llm(fix_prompt, system_prompt=AGENTIC_FIX_SYSTEM_PROMPT, timeout=3600, stream=True)
+                    return stream_repair_response(response)
+                for event in execution_repairs(
+                    code_extracted, user_message,
+                    lambda script: run_python_in_sandbox(script, data_mount_path=data_mount_path, user_prompt=user_message),
+                    repair_script,
+                ):
+                    if event["type"] == "execution_result":
+                        result = event["result"]
+                        code_extracted = event["code"]
+                        execution_exit_code = result.get("exit_code", 1)
+                        sandbox_output = result.get("stdout", "") + "\n" + result.get("stderr", "")
+                        artifacts = result.get("artifacts", []) if execution_exit_code == 0 else []
+                        if artifacts:
+                            yield f"data: {json.dumps({'type': 'artifacts', 'artifacts': [os.path.basename(a) for a in artifacts], 'artifact_paths': artifacts})}\n\n"
+                        if event["exhausted"]:
+                            sandbox_output += "\nDebugging stopped without a verified result. Do not claim success."
+                    elif event["type"] in {"thinking", "content"}:
+                        if event["type"] == "thinking":
+                            thinking_parts.append(event.get("delta", ""))
+                        else:
+                            content_parts.append(event.get("delta", ""))
+                        yield f"data: {json.dumps(event)}\n\n"
+                    elif event["type"] == "repaired_code":
+                        if event.get("streamed"):
+                            continue
+                        delta = f"\n\n### Self-Corrected Script (repair {event['iteration']}/5)\n```python\n{event['code']}\n```\n"
+                        content_parts.append(delta)
+                        yield f"data: {json.dumps({'type': 'content', 'delta': delta})}\n\n"
                     else:
-                        from backend.evaluation.gemini_evaluator import GeminiEvaluator
-                        extracted_fallback = GeminiEvaluator.extract_python_code(fix_raw)
-                        fixed_candidate = extracted_fallback.strip() if extracted_fallback else fix_raw.strip()
-
-                    if fixed_candidate:
-                        code_extracted = fixed_candidate
-                        fix_delta = f"\n\n### 🔧 Self-Corrected Script\n```python\n{code_extracted}\n```\n"
-                        content_parts.append(fix_delta)
-                        yield f"data: {json.dumps({'type': 'content', 'delta': fix_delta})}\n\n"
-                        if not is_mol:
-                            try:
-                                attach_script_to_notebook(code_extracted)
-                            except Exception:
-                                pass
-                    
-                    # Second execution attempt
-                    retry_res = run_python_in_sandbox(code_extracted, data_mount_path=data_mount_path, user_prompt=user_message)
-                    sandbox_output = retry_res.get("stdout", "") or retry_res.get("stderr", "")
-                    artifacts = retry_res.get("artifacts", [])
-                    artifact_names = [os.path.basename(a) for a in artifacts]
-                    if artifacts:
-                        yield f"data: {json.dumps({'type': 'artifacts', 'artifacts': artifact_names, 'artifact_paths': artifacts})}\n\n"
-                    retry_exit = retry_res.get("exit_code", 1)
-                    execution_exit_code = retry_exit
-                    re_details = f"Self-correction finished (Exit {retry_exit})."
-                    if artifact_names:
-                        re_details += f" | Generated: {', '.join(artifact_names)}"
-                    sb_re_done = {"type": "agent_step", "step": "sandbox_complete", "title": "Docker Sandbox Re-execution", "status": "completed", "details": re_details}
-                    trace_steps.append(sb_re_done)
-                    yield f"data: {json.dumps(sb_re_done)}\n\n"
+                        trace_steps.append(event)
+                        yield f"data: {json.dumps(event)}\n\n"
 
             except Exception as e:
                 sb_err = {"type": "agent_step", "step": "sandbox_error", "title": "Sandbox Pipeline", "status": "warning", "details": str(e)}
@@ -480,6 +430,9 @@ Write the corrected Python code block only."""
             conclusion_inst = "Conclude by summarizing the verified Docker container execution results and generated presentation plots, noting that execution ran strictly inside the isolated Docker sandbox environment without modifying any notebook."
         else:
             conclusion_inst = "Conclude by explicitly informing the user that their complete analysis script has been attached to `ChatBot/backend/notebooks/running.ipynb` and they can now execute the notebook in Google Colab (or on Kaggle with T4x2 GPU)."
+
+        if execution_exit_code is not None and execution_exit_code != 0:
+            conclusion_inst = "Execution did not pass validation. Report the final error and that debugging stopped; never claim success or verified artifacts."
 
         synthesis_prompt = f"""You are SciCompute AI, an autonomous scientific materials & chemistry assistant.
 You possess direct access to:

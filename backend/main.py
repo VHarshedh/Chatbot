@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from backend.config import settings
 import uuid
 from backend.agents.baseline_agent import SingleShotAgent
+from backend.agents.cancellation import register_generation, cancel_generation, managed_stream
 from backend.agents.execution_intent import requests_sandbox_execution
 from backend.agents.agentic_agent import AgenticRAGAgent
 from backend.evaluation.script_evaluator import ScriptEvaluator
@@ -115,6 +116,7 @@ class ChatRequest(BaseModel):
     notebook_name: Optional[str] = "running.ipynb"
     images: Optional[List[str]] = None
     run_sandbox: Optional[bool] = None
+    request_id: Optional[uuid.UUID] = None
 
 class SessionCreateRequest(BaseModel):
     title: Optional[str] = "New Session"
@@ -281,15 +283,18 @@ def chat_stream_endpoint(request: ChatRequest):
         user_msg += "\nRequested notebook reference: " + (request.notebook_name or "running.ipynb")
 
     should_run_sandbox = request.run_sandbox if request.run_sandbox is not None else requests_sandbox_execution(raw_text)
-    return StreamingResponse(
-        agent.chat_stream(
+    request_id = str(request.request_id or uuid.uuid4())
+    run = register_generation(request_id)
+    stream = agent.chat_stream(
             user_message=user_msg,
             session_id=request.session_id,
             system_prompt=request.system_prompt,
             images=request.images,
             **({"run_sandbox": should_run_sandbox}
                if request.mode not in ["agentic", "agentic_rag"] else {})
-        ),
+        )
+    return StreamingResponse(
+        managed_stream(stream, request_id, run, request.session_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -297,6 +302,11 @@ def chat_stream_endpoint(request: ChatRequest):
             "X-Accel-Buffering": "no"
         }
     )
+
+@app.post("/api/chat/{request_id}/stop")
+def stop_chat(request_id: uuid.UUID):
+    cancel_generation(str(request_id))
+    return {"status": "stopping", "request_id": str(request_id)}
 
 @app.post("/api/evaluate/gemini")
 def evaluate_gemini_endpoint(request: GeminiEvaluationRequest):

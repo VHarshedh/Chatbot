@@ -21,9 +21,9 @@ class Settings(BaseSettings):
     # 0 = CPU-only mode. Override with NUM_GPU=0 environment variable to force CPU.
     NUM_GPU: int = int(os.getenv("NUM_GPU", "-1"))
 
-    # Context window size: 8192 tokens optimal for AMD Radeon iGPU / mobile unified memory.
+    # Context window size: 32768 tokens default (expanded to accommodate multimodal image embeddings + RAG).
     # Override with NUM_CTX environment variable if needed.
-    NUM_CTX: int = int(os.getenv("NUM_CTX", "8192"))
+    NUM_CTX: int = int(os.getenv("NUM_CTX", "32768"))
 
     # Gemini Evaluation Settings
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")

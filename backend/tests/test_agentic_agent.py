@@ -122,9 +122,9 @@ def test_chat_stream_execution_failure_and_web_correction(mocker):
     steps = [p.get("step") for p in parsed if p["type"] == "agent_step"]
 
     assert "sandbox_retry" in steps
-    assert "web_complete" in steps
+    assert steps.count("sandbox_start") == 2
     assert "sandbox_complete" in steps
-    assert mock_web.called
+    mock_web.assert_not_called()
     content_deltas = [p.get("delta", "") for p in parsed if p.get("type") == "content"]
     assert any("Self-Corrected Script" in d for d in content_deltas)
 
@@ -205,7 +205,7 @@ def test_chat_stream_sandbox_exception(mocker):
     events = list(agent.chat_stream("Run python script"))
 
     parsed = [json.loads(e.replace("data: ", "").strip()) for e in events if e.strip()]
-    sandbox_err = next(p for p in parsed if p.get("step") == "sandbox_error")
+    sandbox_err = next(p for p in parsed if p.get("step") == "sandbox_complete" and p.get("status") == "warning")
     assert "Docker socket missing" in sandbox_err["details"]
 
 def test_chat_stream_llm_stream_error(mocker):

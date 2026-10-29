@@ -3,6 +3,7 @@ import re
 import time
 import json
 import requests
+from backend.agents.cancellation import cancellable_post
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from backend.config import settings
@@ -41,7 +42,7 @@ DEFAULT_SYSTEM_PROMPT = r"""You are SciCompute AI, a principal computational mat
 
 <execution_environment>
 - You operate with an automated, isolated Docker execution sandbox (chatbox-sandbox:latest) with Python 3.12, ASE, Quantum ESPRESSO, LAMMPS, NumPy, SciPy, Matplotlib, and Pandas.
-- ExtXYZ trajectories and simulation files are mounted under `/mnt/data/` (e.g. `/mnt/data/Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz`).
+- ExtXYZ trajectories and simulation files are mounted under `/mnt/data/` (e.g. `/mnt/data/Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz` or `/mnt/data/anatase_tio2.extxyz`).
 - When asked to run, execute, or analyze Python code or simulations in Docker, ALWAYS output the complete Python script enclosed in a ```python ... ``` block. The backend automatically extracts your code block, executes it inside Docker, and displays the console output and plot artifacts to the user.
 - NEVER claim that you cannot run code, lack an execution environment, cannot access files, or cannot run in Docker.
 </execution_environment>
@@ -108,6 +109,17 @@ class SingleShotAgent:
         except Exception as e:
             return f"Error retrieving ASE documentation: {e}"
         return ""
+
+    def _repair_execution_script(self, prompt):
+        response = cancellable_post(f"{self.base_url}/api/chat", json={
+            "model": self.model, "stream": True, "keep_alive": settings.OLLAMA_KEEP_ALIVE,
+            "messages": [{"role": "system", "content": "Debug the scientific script. Return complete corrected Python code only."},
+                         {"role": "user", "content": prompt}],
+            "options": {"num_ctx": settings.NUM_CTX, "temperature": 0.1, "num_gpu": settings.NUM_GPU},
+        }, timeout=600, stream=True)
+        response.raise_for_status()
+        from backend.agents.execution_repair import stream_repair_response
+        return stream_repair_response(response)
 
     def search_web(self, query: str, max_results: int = 3) -> List[Dict[str, Any]]:
         """Searches the web via DuckDuckGo for real-time documentation and syntax verification."""
@@ -214,7 +226,7 @@ class SingleShotAgent:
             "messages": messages,
             "stream": True,
             "options": {
-                "num_ctx": settings.NUM_CTX,       # 8192 tokens
+                "num_ctx": max(settings.NUM_CTX, 32768) if (cleaned_imgs or any(isinstance(m, dict) and m.get("images") for m in messages)) else settings.NUM_CTX,
                 "num_predict": 4096,               # Cap generation at 4096 tokens to prevent runaway loops
                 "temperature": 0.15,               # Low temperature for deterministic syntax & math
                 "top_p": 0.90,                     # Nucleus sampling cutoff
@@ -225,7 +237,7 @@ class SingleShotAgent:
         }
 
         try:
-            response = requests.post(
+            response = cancellable_post(
                 f"{self.base_url}/api/chat",
                 json=payload,
                 stream=True,
@@ -277,6 +289,7 @@ class SingleShotAgent:
             latency = round(time.time() - start_time, 3)
 
             execution_exit_code = None
+            execution_events = []
             code_match = re.search(r"```(?:python)?\s*([\s\S]*?)```", content)
             code_to_run = None
             if code_match:
@@ -299,7 +312,25 @@ class SingleShotAgent:
                     from backend.notebooks.attach_to_notebook import is_anatase_water_molecular_prompt
                     
                     data_mount = _get_data_mount_path(prompt)
-                    sb_res = run_python_in_sandbox(code_to_run, data_mount_path=data_mount, user_prompt=prompt)
+                    from backend.agents.execution_repair import execution_repairs
+                    for event in execution_repairs(code_to_run, prompt,
+                            lambda script: run_python_in_sandbox(script, data_mount_path=data_mount, user_prompt=prompt),
+                            self._repair_execution_script):
+                        if event["type"] == "agent_step":
+                            execution_events.append(event)
+                        if event["type"] == "execution_result":
+                            sb_res = event["result"]
+                            code_to_run = event["code"]
+                        elif event["type"] == "thinking":
+                            thinking += event.get("delta", "")
+                        elif event["type"] == "content":
+                            content += event.get("delta", "")
+                        elif event["type"] == "repaired_code":
+                            if event.get("streamed"):
+                                continue
+                            delta = "\n\n### Corrected script\n```python\n" + event["code"] + "\n```\n"
+                            content += delta
+
                     
                     exit_code = sb_res.get("exit_code", 1)
                     execution_exit_code = exit_code
@@ -366,6 +397,7 @@ class SingleShotAgent:
 
             return {
                 "status": "success",
+                "execution_events": execution_events,
                 "memory_quality": {"execution_required": bool(code_match), "exit_code": execution_exit_code},
                 "response": final_text,
                 "thinking": thinking,
@@ -433,7 +465,7 @@ class SingleShotAgent:
                 role="assistant",
                 content=result["response"],
                 agent_used="SingleShotAgent",
-                tool_calls_json=json.dumps({"memory_quality": result.get("memory_quality", {})})
+                tool_calls_json=json.dumps({"memory_quality": result.get("memory_quality", {}), "execution_events": result.get("execution_events", [])})
             )
 
             try:
@@ -500,7 +532,9 @@ class SingleShotAgent:
         if use_web and _is_web_search_query(user_message):
             try:
                 clean_q = re.sub(r"(?i)\b(search (?:the )?web (?:for)?|look up online (?:for)?|web search)\b", "", user_message).strip() or user_message
+                yield f"data: {json.dumps({'type': 'agent_step', 'step': 'web_search', 'title': 'Web search', 'status': 'running', 'details': clean_q})}\n\n"
                 web_hits = self.search_web(clean_q, max_results=3)
+                yield f"data: {json.dumps({'type': 'agent_step', 'step': 'web_search', 'title': 'Web search', 'status': 'completed', 'details': str(web_hits)[:2000]})}\n\n"
                 if web_hits and not web_hits[0].get("error"):
                     formatted_web = "\n".join(f"- [{h.get('title', 'Ref')}]({h.get('href', '')}): {h.get('body', '')}" for h in web_hits if h.get("title"))
                     if formatted_web:
@@ -545,7 +579,7 @@ class SingleShotAgent:
             "messages": messages,
             "stream": True,
             "options": {
-                "num_ctx": settings.NUM_CTX,       # 8192 tokens
+                "num_ctx": max(settings.NUM_CTX, 32768) if (cleaned_imgs or any(isinstance(m, dict) and m.get("images") for m in messages)) else settings.NUM_CTX,
                 "num_predict": 4096,               # Cap generation at 4096 tokens to prevent runaway loops
                 "temperature": 0.15,               # Low temperature for deterministic syntax & math
                 "top_p": 0.90,                     # Nucleus sampling cutoff
@@ -556,13 +590,14 @@ class SingleShotAgent:
         }
 
         execution_exit_code = None
+        execution_events = []
         thinking_parts = []
         content_parts = []
         eval_count = 0
         total_duration = 0
 
         try:
-            response = requests.post(
+            response = cancellable_post(
                 f"{self.base_url}/api/chat",
                 json=payload,
                 stream=True,
@@ -641,7 +676,29 @@ class SingleShotAgent:
                     from backend.notebooks.attach_to_notebook import is_anatase_water_molecular_prompt
                     
                     data_mount = _get_data_mount_path(user_message)
-                    sb_res = run_python_in_sandbox(code_to_run, data_mount_path=data_mount, user_prompt=user_message)
+                    from backend.agents.execution_repair import execution_repairs
+                    for event in execution_repairs(code_to_run, user_message,
+                            lambda script: run_python_in_sandbox(script, data_mount_path=data_mount, user_prompt=user_message),
+                            self._repair_execution_script):
+                        if event["type"] == "agent_step":
+                            execution_events.append(event)
+                        if event["type"] == "execution_result":
+                            sb_res = event["result"]
+                            code_to_run = event["code"]
+                        elif event["type"] in {"thinking", "content"}:
+                            if event["type"] == "thinking":
+                                thinking += event.get("delta", "")
+                            else:
+                                content += event.get("delta", "")
+                            yield f"data: {json.dumps(event)}\n\n"
+                        elif event["type"] == "repaired_code":
+                            if event.get("streamed"):
+                                continue
+                            delta = "\n\n### Corrected script\n```python\n" + event["code"] + "\n```\n"
+                            content += delta
+                            yield f"data: {json.dumps({'type': 'content', 'delta': delta})}\n\n"
+                        else:
+                            yield f"data: {json.dumps(event)}\n\n"
                     
                     exit_code = sb_res.get("exit_code", 1)
                     execution_exit_code = exit_code
@@ -672,7 +729,9 @@ class SingleShotAgent:
                             err_query = err_lines[-1] if err_lines else "Python ASE simulation error"
                             web_diag = local_error_context(code_to_run, err_query)
                             if not web_diag:
+                                yield f"data: {json.dumps({'type': 'agent_step', 'step': 'web_diagnostics', 'title': 'Web error lookup', 'status': 'running', 'details': err_query})}\n\n"
                                 web_diag = self.search_web(f"Python {err_query}", max_results=2)
+                                yield f"data: {json.dumps({'type': 'agent_step', 'step': 'web_diagnostics', 'title': 'Web error lookup', 'status': 'completed', 'details': str(web_diag)[:2000]})}\n\n"
                             if isinstance(web_diag, str):
                                 web_diag = [{"title": "Installed Python API", "body": web_diag, "href": ""}]
                             if web_diag and not web_diag[0].get("error"):
@@ -719,7 +778,7 @@ class SingleShotAgent:
                 role="assistant",
                 content=final_text,
                 agent_used="SingleShotAgent",
-                tool_calls_json=json.dumps({"memory_quality": {"execution_required": bool(code_match), "exit_code": execution_exit_code}})
+                tool_calls_json=json.dumps({"memory_quality": {"execution_required": bool(code_match), "exit_code": execution_exit_code}, "execution_events": execution_events})
             )
 
             try:
