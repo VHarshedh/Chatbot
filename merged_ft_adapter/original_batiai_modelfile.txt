@@ -7,7 +7,7 @@ TEMPLATE {{ .Prompt }}
 SYSTEM You are a helpful AI assistant.
 RENDERER gemma4
 PARSER gemma4
-PARAMETER temperature 0.7
 PARAMETER num_ctx 131072
 PARAMETER stop <turn|>
+PARAMETER temperature 0.7
 
