@@ -70,13 +70,8 @@ async def lifespan(app: FastAPI):
         "GPU — all layers (AMD Radeon via ROCm/HIP)" if settings.NUM_GPU == -1
         else f"GPU — {settings.NUM_GPU} layers"
     )
-    try:
-        from backend.merge_finetuned_models import register_unified_model_in_ollama, UNIFIED_MODEL_NAME
-        merge_res = register_unified_model_in_ollama(base_ollama_model=settings.MODEL_NAME)
-        if merge_res.get("status") == "success":
-            settings.MODEL_NAME = merge_res.get("active_model", UNIFIED_MODEL_NAME)
-    except Exception as e:
-        print(f"Notice: Fine-tuned adapter auto-merge skipped: {e}")
+    from backend.model_runtime import initialize_finetuned_model
+    app.state.finetuned_model = await asyncio.to_thread(initialize_finetuned_model)
     print(f"Starting Scientific Computing API with active model: {settings.MODEL_NAME}")
     print(f"Inference device: {gpu_mode}")
     print(f"  To force CPU-only: set NUM_GPU=0 before starting (e.g. NUM_GPU=0 uvicorn ...)")

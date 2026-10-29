@@ -63,6 +63,7 @@ class AnalysisAgent:
             
             payload = {
                 "model": self.model,
+                "keep_alive": settings.OLLAMA_KEEP_ALIVE,
                 "messages": messages,
                 "stream": False,
                 "options": {
@@ -86,6 +87,7 @@ class AnalysisAgent:
             try:
                 gen_payload = {
                     "model": self.model,
+                    "keep_alive": settings.OLLAMA_KEEP_ALIVE,
                     "prompt": f"{system_prompt}\n\n{prompt}" if system_prompt else prompt,
                     "stream": False
                 }

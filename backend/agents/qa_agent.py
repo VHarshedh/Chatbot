@@ -80,6 +80,7 @@ Provide an authoritative, direct scientific answer:"""
                 f"{self.base_url}/api/chat",
                 json={
                     "model": self.model,
+                    "keep_alive": settings.OLLAMA_KEEP_ALIVE,
                     "messages": messages,
                     "stream": False,
                     "options": {
@@ -100,6 +101,7 @@ Provide an authoritative, direct scientific answer:"""
             try:
                 gen_payload = {
                     "model": self.model,
+                    "keep_alive": settings.OLLAMA_KEEP_ALIVE,
                     "system": QA_SYSTEM_PROMPT,
                     "prompt": f"{QA_SYSTEM_PROMPT}\n\n{user_prompt}",
                     "stream": False

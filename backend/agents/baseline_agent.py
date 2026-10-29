@@ -210,6 +210,7 @@ class SingleShotAgent:
 
         payload = {
             "model": self.model,
+            "keep_alive": settings.OLLAMA_KEEP_ALIVE,
             "messages": messages,
             "stream": True,
             "options": {
@@ -534,6 +535,7 @@ class SingleShotAgent:
 
         payload = {
             "model": self.model,
+            "keep_alive": settings.OLLAMA_KEEP_ALIVE,
             "messages": messages,
             "stream": True,
             "options": {
