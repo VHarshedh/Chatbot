@@ -70,7 +70,7 @@ def test_scan_workspace_nonexistent():
 def test_ingest_notebooks_to_vectorstore(mocker):
     mocker.patch("backend.rag.notebook_parser.scan_workspace_notebooks", return_value=["test.ipynb"])
     mocker.patch("backend.rag.notebook_parser.extract_notebook_cells", return_value=[
-        {"content": "code", "metadata": {"cell_type": "code"}, "id": "cell_1"}
+        {"content": "code", "metadata": {"cell_type": "code", "source": "test.ipynb"}, "id": "cell_1"}
     ])
     mock_store = mocker.patch("backend.rag.notebook_parser.VectorStore").return_value
     

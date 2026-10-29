@@ -164,7 +164,10 @@ def test_read_root_fallback(mocker):
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
 
-def test_startup_event():
+def test_startup_event(mocker):
+    mocker.patch("backend.main.init_db")
+    mocker.patch("backend.rag.ingest_dataset_zip.ingest_configured_dataset")
+    mocker.patch("backend.rag.chat_memory.get_chat_memory_store")
     import asyncio
     from backend.main import startup_event
     asyncio.run(startup_event())

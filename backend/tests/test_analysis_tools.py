@@ -14,34 +14,13 @@ def test_load_extxyz_trajectory(mocker):
     assert len(frames) == 2
     assert frames == [1, 3]
 
-def test_identify_sites(mocker):
-    mock_frame = mocker.MagicMock()
-    mock_frame.get_chemical_symbols.return_value = ["Pt", "O", "O", "O"]
-    sites = identify_sites(mock_frame, "Pt", 1)
-    assert len(sites["M_sur"]) == 1
-    assert len(sites["O_bulk"]) == 3
-    
-def test_compute_density_profile():
-    res = compute_density_profile([], 1.0, [10, 10, 20])
-    assert "bins" in res
-    assert "density" in res
-    assert len(res["bins"]) == 19
-
-def test_compute_pair_rdf():
-    res = compute_pair_rdf([], [], 0.1)
-    assert "r" in res
-    assert "g_r" in res
-    assert len(res["r"]) == 100
-
-def test_compute_survival_probability():
-    res = compute_survival_probability([], "O_w", 50)
-    assert len(res["t"]) == 50
-    assert len(res["p_t"]) == 50
-
-def test_compute_hydroxyl_fraction():
-    res = compute_hydroxyl_fraction([1, 2, 3], 1.2)
-    assert len(res["t"]) == 3
-    assert len(res["fraction"]) == 3
+def test_empty_analyses_reject_missing_data():
+    with pytest.raises(ValueError):
+        compute_density_profile([], 1.0, [10, 10, 20])
+    with pytest.raises(ValueError):
+        compute_pair_rdf([], [], .1)
+    with pytest.raises(ValueError):
+        compute_survival_probability([], "O_w", 50)
 
 def test_plot_combined_2x2(mocker):
     mocker.patch("matplotlib.pyplot.savefig")
@@ -65,5 +44,5 @@ def test_generate_text_report():
         "hydroxyl": {"t": [0], "fraction": [0.5]}
     }
     report = generate_text_report(results)
-    assert "Survival probability shows exponential decay" in report
+    assert "Continuous survival probability computed" in report
     assert "Average hydroxyl fraction: 0.50" in report

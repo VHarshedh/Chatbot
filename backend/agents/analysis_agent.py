@@ -4,6 +4,8 @@ from backend.config import settings
 from backend.rag.hybrid_retriever import HybridRetriever
 from backend.tools.sandbox_tools import run_python_in_sandbox
 from backend.tools.web_tools import search_web, read_url_content
+from backend.tools.registry import structure_context
+from backend.tools.validation_tools import local_error_context
 
 ANALYSIS_SYSTEM_PROMPT = (
     "SYSTEM DIRECTIVE: You are an expert computational materials scientist and autonomous Python developer "
@@ -106,7 +108,7 @@ class AnalysisAgent:
         print(f"Analysis Agent processing: {user_request}")
         
         # 1. Retrieve Context (Agentic RAG)
-        context = self.retriever.retrieve(user_request)
+        context = self.retriever.retrieve(user_request) + "\n" + structure_context(user_request)
         
         # 2. Write Script
         traj_mount = data_path if data_path else '/mnt/data/traj.extxyz'
@@ -133,7 +135,7 @@ Output the executable Python script in a ```python ... ``` block:"""
         max_retries = 3
         for attempt in range(max_retries):
             print(f"Executing script (Attempt {attempt+1}/{max_retries})...")
-            result = run_python_in_sandbox(code, data_mount_path=data_path)
+            result = run_python_in_sandbox(code, data_mount_path=data_path, user_prompt=user_request)
             
             if result["exit_code"] == 0:
                 print("Execution successful!")
@@ -150,7 +152,7 @@ Output the executable Python script in a ```python ... ``` block:"""
             if "AttributeError" in result['stderr'] or "ImportError" in result['stderr']:
                 err_lines = [line.strip() for line in result["stderr"].splitlines() if line.strip()]
                 search_query = err_lines[-1] if err_lines else "Python ASE AttributeError"
-                web_context = search_web(f"Python {search_query} solution", max_results=2)
+                web_context = local_error_context(code, result["stderr"]) or search_web(f"Python {search_query} solution", max_results=2)
             else:
                 web_context = "No additional web context retrieved."
 

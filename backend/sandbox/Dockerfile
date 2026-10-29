@@ -19,7 +19,8 @@ RUN pip install --no-cache-dir \
     numpy \
     pandas \
     matplotlib \
-    scipy
+    scipy \
+    pydantic-settings
 
 # Temporary workspace for the sandbox
 RUN mkdir -p /tmp/workspace

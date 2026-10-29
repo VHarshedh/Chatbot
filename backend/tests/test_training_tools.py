@@ -21,30 +21,12 @@ def test_scan_raw_systems(mocker):
     assert len(res) == 1
     assert "system1_Water" in res[0]
 
-def test_validate_raw_data(mocker):
-    # Test valid
-    mocker.patch("pathlib.Path.exists", return_value=True)
-    res = validate_raw_data("dummy")
-    assert res["valid"] is True
-    assert res["has_box"] is True
-    
-    # Test invalid
-    mocker.patch("pathlib.Path.exists", side_effect=[True, False, True, True, True])
-    res = validate_raw_data("dummy2")
-    assert res["valid"] is False
-    assert res["has_box"] is True
-    assert res["has_coord"] is False
-
-def test_create_test_split(mocker):
-    mocker.patch("pathlib.Path.mkdir")
-    out = create_test_split("sys")
-    assert "Test" in out
-
-def test_raw_to_set(mocker):
-    mocker.patch("pathlib.Path.mkdir")
-    sets = raw_to_set("sys")
-    assert len(sets) == 3
-    assert "set.000" in sets[0]
+def test_validate_missing_raw_data(tmp_path):
+    assert not validate_raw_data(str(tmp_path))["valid"]
+    with pytest.raises(OSError):
+        create_test_split(str(tmp_path))
+    with pytest.raises(OSError):
+        raw_to_set(str(tmp_path))
 
 @pytest.mark.parametrize("seed,lr", [
     (123, 0.005),

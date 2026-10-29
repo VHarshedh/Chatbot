@@ -53,40 +53,7 @@ class HybridRetriever:
         is_mol = is_anatase_water_molecular_prompt(query)
 
         # 1. Structured Knowledge Graph & Domain Facts
-        kg_facts: List[str] = []
-        if "pt" in q_lower or "platinum" in q_lower:
-            res = self.kg.graph_query(
-                "MATCH (m:Material {symbol: 'Pt'})-[:has_pseudo]->(p:Pseudopotential) RETURN p.filename, p.type, p.xc"
-            )
-            if res:
-                kg_facts.append(
-                    f"- Platinum (Pt) DFT Pseudopotential: `{res[0][0]}` (Type: {res[0][1]}, Functional: {res[0][2]}, recommended `ecutwfc = 60-100` Ry, `ecutrho = 4 * ecutwfc`)."
-                )
-
-        if "water" in q_lower or "h2o" in q_lower:
-            res = self.kg.graph_query("MATCH (s:System {name: 'Water'}) RETURN s.type_map, s.temp")
-            if res:
-                kg_facts.append(
-                    f"- DeePMD Water System: `type_map = {res[0][0]}` (0-indexed in `type.raw`), target temperature = `{res[0][1]} K`, timestep `dt = 0.0005` ps."
-                )
-
-        if "iro2" in q_lower or "iridium" in q_lower:
-            res = self.kg.graph_query(
-                "MATCH (m:Material {symbol: 'Ir'})-[:part_of]->(s:System) RETURN m.name, s.name, s.type_map, s.temp"
-            )
-            if res:
-                kg_facts.append(
-                    f"- {res[0][0]} System `{res[0][1]}`: type_map = {res[0][2]}, simulation temp = {res[0][3]} K."
-                )
-
-        if "tio2" in q_lower or "titanium" in q_lower or "anatase" in q_lower:
-            res = self.kg.graph_query(
-                "MATCH (m:Material {symbol: 'Ti'})-[:part_of]->(s:System) RETURN m.name, s.name, s.type_map, s.temp"
-            )
-            if res:
-                kg_facts.append(
-                    f"- {res[0][0]} System `{res[0][1]}`: type_map = {res[0][2]}, simulation temp = {res[0][3]} K."
-                )
+        kg_facts = self.kg.linked_facts(query)
 
         if is_mol:
             kg_facts.extend([
@@ -97,7 +64,7 @@ class HybridRetriever:
             ])
         if any(w in q_lower for w in ["ase", "neighbor_list", "atomic simulation environment", "trajectory", "atoms"]):
             kg_facts.extend([
-                "- ASE Single Frame vs Trajectory: `atoms = read(path, index=0); atoms.set_pbc(True)` returns `Atoms`; `traj = read(path, index=':')` returns `list[Atoms]` (must unpack before `.get_positions()`).",
+                "- ASE Single Frame vs Trajectory: `atoms = read(path, index=0)` returns `Atoms`; `traj = read(path, index=':')` returns `list[Atoms]` (must unpack before `.get_positions()`).",
                 "- ASE Neighbor Finding: `neighbor_list('ijd', atoms, cutoff=...)` returns 3 1D arrays `(i, j, d)`; pair-specific cutoffs: `neighbor_list('ij', atoms, cutoff={('O', 'H'): 1.25})`.",
                 "- Individual Atom vs Atoms: An individual `atom` from `for atom in atoms` has `.position` (shape (3,)), NOT `.get_positions()` or `.get_neighbors()`.",
                 "- Periodic Minimum Image Convention (MIC): `atoms.get_distance(i, j, mic=True)`, `atoms.get_all_distances(mic=True)`, `atoms.get_angle(a1, a2, a3, mic=True)`.",
@@ -114,7 +81,13 @@ class HybridRetriever:
             if domain_filter:
                 domains.append(domain_filter["domain"])
             domain_filter = {"domain": {"$in": domains}}
-        vs_results = self.vector_store.semantic_search(query, n_results=max_chunks, filter=domain_filter) if max_chunks > 0 else []
+        from backend.rag.query_rewriting import expand_query, decompose_query
+        from backend.rag.vectorstore import reciprocal_rank_fusion
+        searches = [self.vector_store.semantic_search(expand_query(part), n_results=max_chunks, filter=domain_filter)
+                    for part in decompose_query(query)] if max_chunks > 0 else []
+        vs_results = searches[0] if searches else []
+        for results in searches[1:]:
+            vs_results = reciprocal_rank_fusion(vs_results, results, top_n=3)
         if not vs_results and domain_filter is not None and max_chunks > 0:
             vs_results = self.vector_store.semantic_search(query, n_results=max_chunks)
         selected_chunks = []
@@ -123,7 +96,12 @@ class HybridRetriever:
             content = res.get("content", "").strip()
             if content and content not in seen:
                 seen.add(content)
-                selected_chunks.append(self._compress_chunk(content, max_chars=2400))
+                siblings = self.vector_store.notebook_siblings(res)
+                if not isinstance(siblings, str):
+                    siblings = ""
+                selected_chunks.append(self._compress_chunk(content, max_chars=900))
+                if siblings:
+                    selected_chunks.append(siblings)
             if len(selected_chunks) >= max_chunks:
                 break
 
@@ -136,28 +114,43 @@ class HybridRetriever:
                 current_session_id=current_session_id,
                 max_distance=0.85
             )
+            requested_ti = bool(re.search(r"tio2|anatase|titanium", query, re.I))
+            requested_ir = bool(re.search(r"iro2|iridium", query, re.I))
+            if requested_ti != requested_ir:
+                conflict = r"iro2|iridium" if requested_ti else r"tio2|anatase|titanium"
+                memories = [m for m in memories if not re.search(conflict, m.get("content", ""), re.I)]
             if memories:
                 memory_block = self.chat_memory.format_memory_context(memories)
         except Exception:
             pass
 
         # 4. Assemble Compact, High-Signal Context for Gemma 4 E2B
+        from html import escape
+        # Conservative byte budget: UTF-8 bytes upper-bound byte-level token counts.
+        # Keep delimiters intact; omit complete blocks that cannot fit.
         sections = ["<retrieved_context>"]
+        remaining = 1800 - len("<retrieved_context>\n</retrieved_context>".encode())
+        def add(tag, text):
+            nonlocal remaining
+            if not text:
+                return
+            block = f"<{tag}>\n{escape(str(text))}\n</{tag}>"
+            size = len(block.encode("utf-8")) + 1
+            if size <= remaining:
+                sections.append(block)
+                remaining -= size
         if invariants:
-            sections.append("  <physchem_invariants>\n" + "\n".join(invariants) + "\n  </physchem_invariants>")
+            for fact in invariants[:3]:
+                add("physchem_invariants", fact)
         cards = self.kg.structure_metadata(query)
         if cards:
             import json
-            sections.append("  <structure_metadata>\n" + json.dumps(cards, ensure_ascii=False) + "\n  </structure_metadata>")
-        if kg_facts:
-            sections.append("  <domain_ground_truth>\n    " + "\n    ".join(kg_facts) + "\n  </domain_ground_truth>")
-        if selected_chunks:
-            formatted_chunks = "\n\n".join(
-                f"  <reference_chunk index=\"{i+1}\">\n{chunk}\n  </reference_chunk>"
-                for i, chunk in enumerate(selected_chunks)
-            )
-            sections.append(formatted_chunks)
+            add("structure_metadata", json.dumps(cards))
+        for chunk in selected_chunks:
+            add("reference_chunk", chunk)
+        for fact in kg_facts:
+            add("knowledge_graph_fact", fact)
         if memory_block:
-            sections.append(f"  <episodic_memory>\n{memory_block}\n  </episodic_memory>")
+            add("episodic_memory", memory_block)
         sections.append("</retrieved_context>")
         return "\n".join(sections)

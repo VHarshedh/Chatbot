@@ -246,15 +246,9 @@ def chat_endpoint(request: ChatRequest):
 
     raw_text = request.message.strip() if has_text else "Please analyze this attached scientific image / structure for materials science insights."
     user_msg = raw_text
-    if request.mode not in ["agentic", "agentic_rag"] and request.include_notebook_context is not False:
-        try:
-            nb_name = request.notebook_name or "running.ipynb"
-            nb_path = str(Path(__file__).parent / "notebooks" / nb_name)
-            resolved = resolve_prompt_context(raw_text, nb_path)
-            if resolved["matched_type"] != "none" or request.include_notebook_context is True:
-                user_msg = resolved["augmented_prompt"]
-        except Exception:
-            pass
+    # Notebook references enter the same bounded retriever as other sources.
+    if request.include_notebook_context is True:
+        user_msg += "\nRequested notebook reference: " + (request.notebook_name or "running.ipynb")
 
     should_run_sandbox = request.run_sandbox if request.run_sandbox is not None else requests_sandbox_execution(raw_text)
     result = agent.chat(
@@ -282,15 +276,9 @@ def chat_stream_endpoint(request: ChatRequest):
 
     raw_text = request.message.strip() if has_text else "Please analyze this attached scientific image / structure for materials science insights."
     user_msg = raw_text
-    if request.mode not in ["agentic", "agentic_rag"] and request.include_notebook_context is not False:
-        try:
-            nb_name = request.notebook_name or "running.ipynb"
-            nb_path = str(Path(__file__).parent / "notebooks" / nb_name)
-            resolved = resolve_prompt_context(raw_text, nb_path)
-            if resolved["matched_type"] != "none" or request.include_notebook_context is True:
-                user_msg = resolved["augmented_prompt"]
-        except Exception:
-            pass
+    # Notebook references enter the same bounded retriever as other sources.
+    if request.include_notebook_context is True:
+        user_msg += "\nRequested notebook reference: " + (request.notebook_name or "running.ipynb")
 
     should_run_sandbox = request.run_sandbox if request.run_sandbox is not None else requests_sandbox_execution(raw_text)
     return StreamingResponse(

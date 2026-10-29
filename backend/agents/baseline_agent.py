@@ -8,15 +8,13 @@ from typing import Dict, Any, Optional, List
 from backend.config import settings
 from backend.db.models import insert_session, insert_message, execute_query, get_chat_history
 from backend.tools.web_tools import search_web, read_url_content
+from backend.tools.registry import structure_context, resolve_structure_paths, scientific_tool_catalog
+from backend.tools.validation_tools import local_error_context
 
 def _get_data_mount_path(text: str) -> Optional[str]:
-    root_dir = Path(__file__).resolve().parent.parent.parent
-    cand1 = root_dir / "public" / "Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz"
-    cand2 = root_dir / "ChatBot" / "public" / "Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz"
-    cand = cand1 if cand1.exists() else (cand2 if cand2.exists() else None)
-    if cand and any(w in text.lower() for w in ["anatase", "extxyz", "ti02", "tio2", "water molecular"]):
-        return str(cand)
-    return None
+    paths = resolve_structure_paths(text)
+    return paths[0] if len(paths) == 1 else (paths or None)
+
 
 def _is_ase_query(text: str) -> bool:
     """Detects if prompt or query involves ASE or molecular dynamics simulations."""
@@ -157,7 +155,9 @@ class SingleShotAgent:
         sys_prompt = system_prompt if system_prompt is not None else DEFAULT_SYSTEM_PROMPT
         start_time = time.time()
 
-        extra_context = []
+        extra_context = [structure_context(prompt)]
+        if run_sandbox:
+            extra_context.append(scientific_tool_catalog())
         if use_rag and _is_ase_query(prompt):
             try:
                 ase_docs = self.retrieve_ase_docs(prompt)
@@ -299,7 +299,7 @@ class SingleShotAgent:
                     from backend.notebooks.attach_to_notebook import is_anatase_water_molecular_prompt
                     
                     data_mount = _get_data_mount_path(prompt)
-                    sb_res = run_python_in_sandbox(code_to_run, data_mount_path=data_mount)
+                    sb_res = run_python_in_sandbox(code_to_run, data_mount_path=data_mount, user_prompt=prompt)
                     
                     exit_code = sb_res.get("exit_code", 1)
                     execution_exit_code = exit_code
@@ -325,7 +325,11 @@ class SingleShotAgent:
                         try:
                             err_lines = [l.strip() for l in stderr.splitlines() if l.strip()]
                             err_query = err_lines[-1] if err_lines else "Python ASE simulation error"
-                            web_diag = self.search_web(f"Python {err_query}", max_results=2)
+                            web_diag = local_error_context(code_to_run, err_query)
+                            if not web_diag:
+                                web_diag = self.search_web(f"Python {err_query}", max_results=2)
+                            if isinstance(web_diag, str):
+                                web_diag = [{"title": "Installed Python API", "body": web_diag, "href": ""}]
                             if web_diag and not web_diag[0].get("error"):
                                 diag_items = "\n".join(f"- [{h.get('title', 'Ref')}]({h.get('href', '')}): {h.get('body', '')}" for h in web_diag if h.get("title"))
                                 if diag_items:
@@ -482,7 +486,9 @@ class SingleShotAgent:
 
         sys_prompt = system_prompt if system_prompt is not None else DEFAULT_SYSTEM_PROMPT
 
-        extra_context = []
+        extra_context = [structure_context(user_message)]
+        if run_sandbox:
+            extra_context.append(scientific_tool_catalog())
         if use_rag and _is_ase_query(user_message):
             try:
                 ase_docs = self.retrieve_ase_docs(user_message)
@@ -635,7 +641,7 @@ class SingleShotAgent:
                     from backend.notebooks.attach_to_notebook import is_anatase_water_molecular_prompt
                     
                     data_mount = _get_data_mount_path(user_message)
-                    sb_res = run_python_in_sandbox(code_to_run, data_mount_path=data_mount)
+                    sb_res = run_python_in_sandbox(code_to_run, data_mount_path=data_mount, user_prompt=user_message)
                     
                     exit_code = sb_res.get("exit_code", 1)
                     execution_exit_code = exit_code
@@ -664,7 +670,11 @@ class SingleShotAgent:
                         try:
                             err_lines = [l.strip() for l in stderr.splitlines() if l.strip()]
                             err_query = err_lines[-1] if err_lines else "Python ASE simulation error"
-                            web_diag = self.search_web(f"Python {err_query}", max_results=2)
+                            web_diag = local_error_context(code_to_run, err_query)
+                            if not web_diag:
+                                web_diag = self.search_web(f"Python {err_query}", max_results=2)
+                            if isinstance(web_diag, str):
+                                web_diag = [{"title": "Installed Python API", "body": web_diag, "href": ""}]
                             if web_diag and not web_diag[0].get("error"):
                                 diag_items = "\n".join(f"- [{h.get('title', 'Ref')}]({h.get('href', '')}): {h.get('body', '')}" for h in web_diag if h.get("title"))
                                 if diag_items:
@@ -709,7 +719,7 @@ class SingleShotAgent:
                 role="assistant",
                 content=final_text,
                 agent_used="SingleShotAgent",
-                tool_calls_json=json.dumps({"memory_quality": {"execution_required": bool(run_sandbox and code_match), "exit_code": execution_exit_code}})
+                tool_calls_json=json.dumps({"memory_quality": {"execution_required": bool(code_match), "exit_code": execution_exit_code}})
             )
 
             try:
@@ -719,7 +729,7 @@ class SingleShotAgent:
                     user_message=user_message,
                     assistant_message=final_text,
                     agent_used="SingleShotAgent",
-                    execution_required=bool(run_sandbox and code_match), exit_code=execution_exit_code
+                    execution_required=bool(code_match), exit_code=execution_exit_code
                 )
             except Exception:
                 pass

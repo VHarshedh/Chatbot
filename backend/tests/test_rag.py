@@ -50,7 +50,7 @@ def test_hybrid_retriever(mocker):
     mocker.patch("kuzu.Connection")
     
     mocker.patch("backend.rag.vectorstore.VectorStore.semantic_search", return_value=[{"content": "Vector doc", "metadata": {}}])
-    mocker.patch("backend.rag.knowledge_graph.KnowledgeGraph.graph_query", side_effect=[[["Pt_test.upf", "ONCV", "PBE"]], [["H, O", 300]]])
+    mocker.patch("backend.rag.knowledge_graph.KnowledgeGraph.linked_facts", return_value=["Pt_test.upf ONCV PBE", "Water H, O 300 K"])
 
     hr = HybridRetriever()
     context = hr.retrieve("test query for Pt and Water")
@@ -162,3 +162,15 @@ def test_hybrid_retriever_is_mol_keeps_vector_search(mocker):
 
 
 
+
+@pytest.fixture(autouse=True)
+def isolate_rag_singletons():
+    """Prevent mocked graph/vector connections escaping into later agent tests."""
+    from backend.rag.chat_memory import ChatMemoryStore
+    classes = [(KnowledgeGraph, '_instance'), (HybridRetriever, '_vs_instance'), (HybridRetriever, '_kg_instance'), (ChatMemoryStore, '_instance')]
+    previous = [getattr(cls, name) for cls, name in classes]
+    for cls, name in classes:
+        setattr(cls, name, None)
+    yield
+    for (cls, name), value in zip(classes, previous):
+        setattr(cls, name, value)

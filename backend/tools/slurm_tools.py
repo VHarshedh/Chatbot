@@ -15,6 +15,8 @@ def _run_ssh_cmd(cmd: str) -> str:
         # Local mock execution for testing
         cmd_args = shlex.split(cmd) if isinstance(cmd, str) else cmd
         result = subprocess.run(cmd_args, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"SLURM command failed: {result.stderr}")
         return result.stdout
         
     ssh_cmd = ["ssh", "-i", str(key), f"{user}@{host}", cmd]
@@ -26,7 +28,7 @@ def _run_ssh_cmd(cmd: str) -> str:
 def submit_job(script_path: str) -> str:
     """Submits a job using sbatch and returns the job ID"""
     # E.g., script_path could be an absolute path on the cluster
-    cmd = f"sbatch {script_path}"
+    cmd = f"sbatch {shlex.quote(script_path)}"
     output = _run_ssh_cmd(cmd)
     
     # Parse job ID from output: "Submitted batch job 12345"
@@ -34,11 +36,12 @@ def submit_job(script_path: str) -> str:
     if match:
         return match.group(1)
     
-    # Fallback mock for local testing
-    return "99999"
+    raise RuntimeError(f"sbatch did not return a job ID: {output}")
 
 def check_job_status(job_id: str) -> dict:
     """Checks the status of a job using squeue/sacct"""
+    if not re.fullmatch(r"[0-9]+(?:_[0-9]+)?", str(job_id)):
+        raise ValueError("Invalid SLURM job ID")
     cmd = f"squeue -j {job_id} -h -o %T"
     try:
         output = _run_ssh_cmd(cmd).strip()
@@ -58,6 +61,8 @@ def check_job_status(job_id: str) -> dict:
 
 def cancel_job(job_id: str) -> bool:
     """Cancels a job using scancel"""
+    if not re.fullmatch(r"[0-9]+(?:_[0-9]+)?", str(job_id)):
+        raise ValueError("Invalid SLURM job ID")
     cmd = f"scancel {job_id}"
     try:
         _run_ssh_cmd(cmd)
@@ -68,6 +73,8 @@ def cancel_job(job_id: str) -> bool:
 def get_job_log(job_id: str, tail_lines: int = 50) -> str:
     """Retrieves the tail of the slurm output log"""
     # We would need to know the log path, usually slurm-{job_id}.out
+    if not re.fullmatch(r"[0-9]+(?:_[0-9]+)?", str(job_id)):
+        raise ValueError("Invalid SLURM job ID")
     cmd = f"tail -n {tail_lines} slurm-{job_id}.out"
     try:
         return _run_ssh_cmd(cmd)

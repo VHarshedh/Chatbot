@@ -24,6 +24,7 @@ class SandboxExecutor:
         self.image_name = image_name
         self.client = None
         self.wsl_available = False
+        self.cli_available = False
 
         # Attempt 1: Native docker Python client (Docker Desktop named pipe / socket)
         if docker:
@@ -33,8 +34,16 @@ class SandboxExecutor:
             except Exception:
                 self.client = None
 
+        # Respect Docker Desktop's active CLI context when SDK named-pipe discovery fails.
+        if not self.client and shutil.which("docker"):
+            try:
+                check = subprocess.run(["docker", "version", "--format", "{{.Server.Version}}"], capture_output=True, text=True, timeout=10)
+                self.cli_available = check.returncode == 0
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+
         # Attempt 2: WSL2 Docker fallback if native client is unavailable
-        if not self.client and shutil.which("wsl"):
+        if not self.client and not self.cli_available and shutil.which("wsl"):
             try:
                 check = subprocess.run(
                     ["wsl", "-d", "Ubuntu", "docker", "images", "-q", self.image_name],
@@ -71,7 +80,7 @@ class SandboxExecutor:
         - Data files mounted strictly read-only at /mnt/data/<basename>
         - Container auto-removes on completion
         """
-        if not self.client and not self.wsl_available:
+        if not self.client and not self.wsl_available and not getattr(self, "cli_available", False):
             return {
                 "stdout": "",
                 "stderr": "Docker is not running on the host (neither Docker Desktop nor WSL Docker daemon reachable).",
@@ -88,20 +97,28 @@ class SandboxExecutor:
 
             env_vars = {
                 "MPLCONFIGDIR": "/tmp/workspace",
-                "TMPDIR": "/tmp/workspace"
+                "TMPDIR": "/tmp/workspace",
+                "PYTHONPATH": "/opt/toolkit"
             }
 
             exit_code = 1
-            logs = ""
+            stdout, stderr = "", ""
+            paths = [data_file_path] if isinstance(data_file_path, str) else list(data_file_path or [])
+            names = [os.path.basename(os.path.abspath(p)) for p in paths]
+            if len(names) != len(set(names)):
+                raise ValueError("Input mount basenames must be unique")
 
             # Option A: Execute via Docker Python SDK
             if self.client:
                 volumes = {
-                    workspace_dir: {'bind': '/tmp/workspace', 'mode': 'rw'}
+                    workspace_dir: {'bind': '/tmp/workspace', 'mode': 'rw'},
+                    os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'tools')): {'bind': '/opt/toolkit/backend/tools', 'mode': 'ro'},
+                    os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'config.py')): {'bind': '/opt/toolkit/backend/config.py', 'mode': 'ro'}
                 }
-                if data_file_path and os.path.exists(data_file_path):
-                    data_basename = os.path.basename(data_file_path)
-                    volumes[os.path.abspath(data_file_path)] = {'bind': f'/mnt/data/{data_basename}', 'mode': 'ro'}
+                for path in paths:
+                    if not os.path.exists(path):
+                        raise FileNotFoundError(path)
+                    volumes[os.path.abspath(path)] = {'bind': f'/mnt/data/{os.path.basename(os.path.abspath(path))}', 'mode': 'ro'}
 
                 container = None
                 try:
@@ -120,9 +137,10 @@ class SandboxExecutor:
                     )
                     result = container.wait(timeout=120)
                     exit_code = result.get('StatusCode', 1)
-                    logs = container.logs(stdout=True, stderr=True).decode('utf-8', errors='replace')
+                    stdout = container.logs(stdout=True, stderr=False).decode('utf-8', errors='replace')
+                    stderr = container.logs(stdout=False, stderr=True).decode('utf-8', errors='replace')
                 except Exception as e:
-                    logs = str(e)
+                    stderr = str(e)
                     exit_code = -1
                 finally:
                     if container is not None:
@@ -132,35 +150,37 @@ class SandboxExecutor:
                             pass
 
             # Option B: Execute via WSL2 Docker CLI fallback
-            elif self.wsl_available:
-                wsl_workspace = _win_to_wsl_path(workspace_dir)
-                cmd = [
-                    "wsl", "-d", "Ubuntu", "docker", "run", "--rm",
+            elif self.wsl_available or getattr(self, "cli_available", False):
+                convert_path = _win_to_wsl_path if self.wsl_available else os.path.abspath
+                wsl_workspace = convert_path(workspace_dir)
+                prefix = ["wsl", "-d", "Ubuntu", "docker"] if self.wsl_available else ["docker"]
+                cmd = prefix + ["run", "--rm",
                     "--network", "none",
                     "--memory", "2g",
                     "--pids-limit", "50",
                     "--read-only",
                     "-e", "MPLCONFIGDIR=/tmp/workspace",
                     "-e", "TMPDIR=/tmp/workspace",
+                    "-e", "PYTHONPATH=/opt/toolkit",
+                    "-v", f"{convert_path(os.path.join(os.path.dirname(__file__), "..", "tools"))}:/opt/toolkit/backend/tools:ro",
+                    "-v", f"{convert_path(os.path.join(os.path.dirname(__file__), "..", "config.py"))}:/opt/toolkit/backend/config.py:ro",
                     "-w", "/tmp/workspace",
                     "-v", f"{wsl_workspace}:/tmp/workspace:rw"
                 ]
 
-                if data_file_path and os.path.exists(data_file_path):
-                    data_basename = os.path.basename(data_file_path)
-                    wsl_data = _win_to_wsl_path(data_file_path)
-                    cmd.extend(["-v", f"{wsl_data}:/mnt/data/{data_basename}:ro"])
+                for path in paths:
+                    if not os.path.exists(path):
+                        raise FileNotFoundError(path)
+                    cmd.extend(["-v", f"{convert_path(path)}:/mnt/data/{os.path.basename(os.path.abspath(path))}:ro"])
 
                 cmd.extend([self.image_name, "python", "/tmp/workspace/script.py"])
 
                 try:
                     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
                     exit_code = proc.returncode
-                    logs = proc.stdout if exit_code == 0 else (proc.stdout + "\n" + proc.stderr).strip()
-                    if not logs and proc.stderr:
-                        logs = proc.stderr
+                    stdout, stderr = proc.stdout, proc.stderr
                 except Exception as e:
-                    logs = str(e)
+                    stderr = str(e)
                     exit_code = -1
 
             # Retrieve any plots/artifacts generated in workspace_dir
@@ -174,17 +194,19 @@ class SandboxExecutor:
                     if file == "script.py" or file.startswith("fontlist") or file.endswith(".cache"):
                         continue
                     src_path = os.path.join(root, file)
+                    if os.path.islink(src_path) or not os.path.isfile(src_path):
+                        continue
                     try:
                         dst_path = os.path.join(public_dir, file)
                         shutil.copy2(src_path, dst_path)
                         generated_files.append(dst_path)
-                    except Exception:
-                        generated_files.append(src_path)
+                    except OSError:
+                        continue
 
             return {
-                "stdout": logs if exit_code == 0 else "",
-                "stderr": logs if exit_code != 0 else "",
-                "logs": logs,
+                "stdout": stdout,
+                "stderr": stderr,
+                "logs": stdout + stderr,
                 "exit_code": exit_code,
                 "artifacts": generated_files
             }

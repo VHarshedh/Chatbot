@@ -43,20 +43,20 @@ def test_create_convergence_sweep(mocker):
     dirs2 = create_convergence_sweep("dummy.cif", "kpoints", [2, 4], 50.0)
     assert len(dirs2) == 2
 
-def test_parse_convergence_results(mocker):
-    # Mock iterdir to return some mock paths
-    mock_path = mocker.MagicMock()
-    mock_path.is_dir.return_value = True
-    mock_path.name = "ecut_50.0"
-    
-    mock_base = mocker.patch("pathlib.Path.iterdir", return_value=[mock_path])
-    mocker.patch("pathlib.Path.exists", return_value=True)
-    
-    df = parse_convergence_results("dummy_dir")
-    assert not df.empty
-    assert "parameter" in df.columns
-    assert "energy" in df.columns
+def test_parse_convergence_results(mocker, tmp_path):
+    from ase import Atoms
+    from ase.calculators.singlepoint import SinglePointCalculator
+    from ase.units import Ry
+    folder = tmp_path/"ecut_50.0"
+    folder.mkdir()
+    (folder/"pw.out").write_text("fixture")
+    atoms = Atoms("Pt")
+    atoms.calc = SinglePointCalculator(atoms, energy=-12*Ry)
+    reader = mocker.patch("backend.tools.dft_tools.read", return_value=atoms)
+    df = parse_convergence_results(str(tmp_path))
     assert df["parameter"].iloc[0] == 50.0
+    assert df["energy"].iloc[0] == pytest.approx(-12)
+    assert reader.call_args.kwargs["format"] == "espresso-out"
 
 def test_parse_convergence_results_empty(mocker):
     mocker.patch("pathlib.Path.exists", return_value=False)
@@ -73,3 +73,11 @@ def test_plot_convergence_empty():
     df = pd.DataFrame()
     out = plot_convergence(df, "ecutwfc", "plot.png")
     assert out == ""
+
+
+def test_qe_uses_real_titanium_mass():
+    from ase.data import atomic_masses, atomic_numbers
+    structure = {"chemical_symbols": ["Ti"], "elements": ["Ti"], "positions": [[0,0,0]]}
+    text = generate_qe_scf_input(structure, 60, [2,2,2], {})
+    assert "ecutrho = 240" in text
+    assert str(atomic_masses[atomic_numbers["Ti"]]) in text

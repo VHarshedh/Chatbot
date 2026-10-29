@@ -95,6 +95,36 @@ class VectorStore:
             selected[1], selected[2] = selected[2], selected[1]
         return selected
 
+    def notebook_siblings(self, result, max_chars=1600):
+        """Condense executable siblings in cell order, preserving imports/signatures."""
+        import ast
+        parent = result.get("metadata", {}).get("parent_id")
+        if not parent:
+            return ""
+        data = self.collection.get(where={"$and": [{"parent_id": parent}, {"cell_type": "code"}]}, include=["documents", "metadatas"])
+        blocks, used = [], 0
+        for content, meta in sorted(zip(data["documents"], data["metadatas"]), key=lambda row: row[1].get("cell_index", 0)):
+            if meta.get("cell_index") == result["metadata"].get("cell_index"):
+                continue
+            code = "\n".join(line for line in content.splitlines() if not line.startswith("[Source:"))
+            try:
+                tree = ast.parse(code)
+            except SyntaxError:
+                continue
+            lines = []
+            for node in tree.body:
+                if isinstance(node, (ast.Import, ast.ImportFrom, ast.Assign, ast.AnnAssign)):
+                    text = ast.unparse(node)
+                    if len(text) <= 300:
+                        lines.append(text)
+                elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    lines.append(ast.unparse(node).splitlines()[0] + " ...")
+            block = f"# Sibling cell {meta['cell_index']} (dependency outline, not executable)\n" + "\n".join(lines)
+            if lines and used + len(block) <= max_chars:
+                blocks.append(block)
+                used += len(block)
+        return "\n".join(blocks)
+
 
 def ingest_readmes():
     store = VectorStore()

@@ -126,6 +126,37 @@ class KnowledgeGraph:
             facts.append('- RDF: normalize pair histograms by (N_A * N_B / V) * (4*pi/3) * (r_outer**3 - r_inner**3), exclude self pairs, and use periodic minimum-image distances within the valid box radius.')
         return facts
 
+    def linked_facts(self, query):
+        """Link whole entity names/aliases, then traverse stored relationships."""
+        facts = []
+        for symbol, name, path, stoich in self.graph_query("MATCH (m:Material) RETURN m.symbol, m.name, m.cif_path, m.stoich_o"):
+            aliases = [symbol, name] + {"Ti": ["TiO2", "anatase", "titanium"], "Ir": ["IrO2", "iridium"], "C": ["graphene"]}.get(symbol, [])
+            if not any(re.search(r"(?<![\w])" + re.escape(a) + r"(?![\w])", query, re.I) for a in aliases if a):
+                continue
+            facts.append(f"Material {name} ({symbol}), oxygen stoichiometry {stoich}, reference path {path}.")
+            if self.conn:
+                for statement in (
+                    "MATCH (m:Material {symbol: $symbol})-[:has_pseudo]->(p:Pseudopotential) RETURN p.filename, p.type, p.xc",
+                    "MATCH (m:Material {symbol: $symbol})-[:part_of]->(s:System) RETURN s.name, s.type_map, s.temp",
+                    "MATCH (n:Notebook)-[:operates_on]->(m:Material {symbol: $symbol}) RETURN n.path, n.domain"):
+                    try:
+                        result = self.conn.execute(statement, {"symbol": symbol})
+                        while result.has_next():
+                            facts.append(" | ".join(map(str, result.get_next())))
+                    except RuntimeError:
+                        continue  # Notebook tables may not have been ingested yet.
+        for name, types, temp in self.graph_query("MATCH (s:System) RETURN s.name, s.type_map, s.temp"):
+            if re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)", query, re.I):
+                facts.append(f"System {name}: type_map={types}, temperature={temp} K.")
+                if self.conn:
+                    try:
+                        result = self.conn.execute("MATCH (n:Notebook)-[:targets_system]->(s:System {name: $name}) RETURN n.path, n.domain", {"name": name})
+                        while result.has_next():
+                            facts.append(" | ".join(map(str, result.get_next())))
+                    except RuntimeError:
+                        pass
+        return facts
+
     def graph_query(self, query: str) -> list[dict]:
         results = []
         try:

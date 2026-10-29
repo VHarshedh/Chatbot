@@ -1,6 +1,8 @@
 import os
 from pathlib import Path
 from ase.io import read
+from ase.data import atomic_masses, atomic_numbers
+from ase.units import Ry
 import pandas as pd
 import matplotlib.pyplot as plt
 
@@ -8,7 +10,7 @@ def parse_cif(cif_path: str) -> dict:
     """Reads CIF via ASE, returns elements, cell params, positions"""
     atoms = read(cif_path)
     return {
-        "elements": list(set(atoms.get_chemical_symbols())),
+        "elements": sorted(set(atoms.get_chemical_symbols())),
         "cell": atoms.get_cell().tolist(),
         "positions": atoms.get_positions().tolist(),
         "chemical_symbols": atoms.get_chemical_symbols()
@@ -21,7 +23,7 @@ def generate_qe_scf_input(structure: dict, ecutwfc: float, kpoints: list, pseudo
     elements = structure["elements"]
     
     input_str = f"&CONTROL\n  calculation = 'scf',\n  pseudo_dir = './pseudo/',\n  outdir = './out/'\n/\n"
-    input_str += f"&SYSTEM\n  ibrav = 0,\n  nat = {len(symbols)},\n  ntyp = {len(elements)},\n  ecutwfc = {ecutwfc},\n"
+    input_str += f"&SYSTEM\n  ibrav = 0,\n  nat = {len(symbols)},\n  ntyp = {len(elements)},\n  ecutwfc = {ecutwfc},\n  ecutrho = {4 * ecutwfc},\n"
     if nbnd:
         input_str += f"  nbnd = {nbnd},\n"
     input_str += f"  occupations = 'smearing',\n  smearing = '{smearing}',\n  degauss = {degauss}\n/\n"
@@ -31,7 +33,7 @@ def generate_qe_scf_input(structure: dict, ecutwfc: float, kpoints: list, pseudo
     for el in elements:
         pseudo = pseudo_map.get(el, f"{el}.UPF")
         # Example atomic masses
-        mass = 1.0 if el == 'H' else 16.0 if el == 'O' else 195.08 if el == 'Pt' else 1.0
+        mass = atomic_masses[atomic_numbers[el]]
         input_str += f"  {el} {mass} {pseudo}\n"
         
     if "cell" in structure and structure["cell"]:
@@ -79,22 +81,14 @@ def create_convergence_sweep(cif_path: str, mode: str, values: list, fixed_param
     return job_dirs
 
 def parse_convergence_results(sweep_dir: str) -> pd.DataFrame:
-    """Reads pw.out files, returns energy table. Mock implementation."""
-    # In reality, this would regex parse '!' total energy from QE out files
+    """Read actual QE energies, converted from ASE eV to Ry; absent outputs are skipped."""
     data = []
-    sweep_path = Path(sweep_dir)
-    if sweep_path.exists():
-        for job_dir in sweep_path.iterdir():
-            if job_dir.is_dir():
-                # Mock parsing
-                val = float(job_dir.name.split("_")[1])
-                # Mock energy that converges
-                energy = -100.0 - (1.0 / val)
-                data.append({"parameter": val, "energy": energy})
-    df = pd.DataFrame(data)
-    if not df.empty:
-        df = df.sort_values("parameter")
-    return df
+    for output in sorted(Path(sweep_dir).glob("*/pw.out")):
+        value = float(output.parent.name.split("_", 1)[1])
+        atoms = read(str(output), format="espresso-out", index=-1)
+        data.append({"parameter": value, "energy": atoms.get_potential_energy()/Ry})
+    return pd.DataFrame(data, columns=["parameter", "energy"]).sort_values("parameter")
+
 
 def plot_convergence(df: pd.DataFrame, mode: str, save_path: str) -> str:
     """Generates publication-quality convergence plot"""

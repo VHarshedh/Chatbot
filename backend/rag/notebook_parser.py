@@ -100,6 +100,12 @@ def ingest_notebooks_to_vectorstore(notebook_paths: List[str] = None) -> int:
     print(f"Ingesting {len(all_docs)} notebook cells across {len(notebook_paths)} notebooks into VectorStore...")
     store = VectorStore()
     store.add_documents(texts, metadatas, ids)
+    for source in {doc["metadata"]["source"] for doc in all_docs}:
+        current = {doc["id"] for doc in all_docs if doc["metadata"]["source"] == source}
+        previous = store.collection.get(where={"$and": [{"source": source}, {"doc_type": "notebook_cell"}]})
+        stale = set(previous["ids"]) - current
+        if stale:
+            store.collection.delete(ids=sorted(stale))
     print("Notebook vector ingestion complete.")
     return len(all_docs)
 

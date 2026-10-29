@@ -7,6 +7,8 @@ from typing import Dict, Any, Generator, Optional, List
 from backend.config import settings
 from backend.rag.hybrid_retriever import HybridRetriever
 from backend.tools.sandbox_tools import run_python_in_sandbox
+from backend.tools.registry import structure_context, resolve_structure_paths, scientific_tool_catalog
+from backend.tools.validation_tools import local_error_context
 from backend.tools.web_tools import search_web, read_url_content
 from backend.db.models import insert_session, insert_message, get_chat_history
 
@@ -208,8 +210,6 @@ class AgenticRAGAgent:
                 anaphoric_words = ["it", "its", "this", "these", "that", "those", "same", "previous", "earlier", "above"]
                 if any(w in user_message.lower().split() for w in anaphoric_words) and last_user_msg:
                     retrieval_query = f"{last_user_msg}\n{user_message}"
-            from backend.rag.query_rewriting import expand_query
-            retrieval_query = expand_query(retrieval_query)
             context = str(self.retriever.retrieve(retrieval_query, current_session_id=session_id))
             rag_snippet = context[:400] + ("..." if len(context) > 400 else "")
             rag_step = {"type": "agent_step", "step": "rag_complete", "title": "Hybrid RAG Retrieval", "status": "completed", "details": rag_snippet}
@@ -263,8 +263,12 @@ class AgenticRAGAgent:
                     "   Physical System: Anatase TiO2 surface slab with molecularly adsorbed water. Surface Ti_5c (CUS) coordinate molecular water; bridging oxygens O_br hydrogen bond with water.\n"
                     "   Calculate total energy (`atoms.get_potential_energy()` or `atoms.info.get('energy')`), water density profile along z, structural metrics, and save presentation graph `anatase_tio2_water_analysis.png` (`plt.savefig(..., dpi=300, bbox_inches='tight')`, `plt.close()`).\n"
                 )
-            elif anatase_extxyz and any(w in user_message.lower() for w in ["anatase", "extxyz", "ti02", "tio2"]):
+            elif anatase_extxyz and any(w in user_message.lower() for w in ["anatase", "ti02", "tio2"]):
                 data_mount_path = str(anatase_extxyz)
+
+            paths = resolve_structure_paths(user_message)
+            data_mount_path = paths[0] if len(paths) == 1 else (paths or data_mount_path)
+            data_mount_inst += "\n" + structure_context(user_message) + "\n" + scientific_tool_catalog()
 
             if is_mol:
                 grounding_requirement = (
@@ -272,7 +276,7 @@ class AgenticRAGAgent:
                     "CRITICAL: `read(path, index=':')` returns a list of Atoms. Unpack `atoms = traj[0] if isinstance(traj, list) else traj` before accessing `.get_positions()`. Do not assume variables are pre-loaded in memory."
                 )
             else:
-                grounding_requirement = "1. Ground your script on the target notebook `running.ipynb` alone (pre-loaded `traj` variable in memory from `/content/MPtrj/...`)."
+                grounding_requirement = "1. Load the explicitly requested input files from their inspected sandbox paths. No variables are pre-loaded. Use retrieved references only for the requested material."
 
             history_section = ""
             if history:
@@ -380,7 +384,7 @@ CRITICAL IMPLEMENTATION REQUIREMENTS:
                 trace_steps.append(sb_start)
                 yield f"data: {json.dumps(sb_start)}\n\n"
                 
-                sandbox_res = run_python_in_sandbox(code_extracted, data_mount_path=data_mount_path)
+                sandbox_res = run_python_in_sandbox(code_extracted, data_mount_path=data_mount_path, user_prompt=user_message)
                 execution_exit_code = sandbox_res.get("exit_code")
                 if sandbox_res["exit_code"] == 0:
                     sandbox_output = sandbox_res["stdout"]
@@ -396,14 +400,16 @@ CRITICAL IMPLEMENTATION REQUIREMENTS:
                     yield f"data: {json.dumps(sb_done)}\n\n"
                 else:
                     stderr_snippet = sandbox_res.get("stderr", "Unknown error")
-                    sb_retry = {"type": "agent_step", "step": "sandbox_retry", "title": "Docker Sandbox Execution", "status": "warning", "details": f"Execution failed: {stderr_snippet[:150]}. Invoking Web Search tool..."}
+                    sb_retry = {"type": "agent_step", "step": "sandbox_retry", "title": "Docker Sandbox Execution", "status": "warning", "details": f"Execution failed: {stderr_snippet[:150]}. Looking up installed scientific APIs..."}
                     trace_steps.append(sb_retry)
                     yield f"data: {json.dumps(sb_retry)}\n\n"
                     
                     # Web Search Tool invocation
                     web_query = f"Python {stderr_snippet.splitlines()[-1]}" if stderr_snippet else "Python ASE simulation error"
-                    web_results = search_web(web_query, max_results=2)
-                    web_step = {"type": "agent_step", "step": "web_complete", "title": "Web Search Tool", "status": "completed", "details": f"Searched DuckDuckGo: \"{web_query}\""}
+                    web_results = local_error_context(code_extracted, stderr_snippet)
+                    if not web_results:
+                        web_results = search_web(web_query, max_results=2)
+                    web_step = {"type": "agent_step", "step": "web_complete", "title": "API diagnostics", "status": "completed", "details": str(web_results)[:300]}
                     trace_steps.append(web_step)
                     yield f"data: {json.dumps(web_step)}\n\n"
                     
@@ -444,7 +450,7 @@ Write the corrected Python code block only."""
                                 pass
                     
                     # Second execution attempt
-                    retry_res = run_python_in_sandbox(code_extracted, data_mount_path=data_mount_path)
+                    retry_res = run_python_in_sandbox(code_extracted, data_mount_path=data_mount_path, user_prompt=user_message)
                     sandbox_output = retry_res.get("stdout", "") or retry_res.get("stderr", "")
                     artifacts = retry_res.get("artifacts", [])
                     artifact_names = [os.path.basename(a) for a in artifacts]
