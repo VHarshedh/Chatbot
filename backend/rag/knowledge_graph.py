@@ -1,5 +1,8 @@
 import kuzu
 import os
+import json
+import hashlib
+import re
 from backend.config import settings
 
 class KnowledgeGraph:
@@ -39,6 +42,8 @@ class KnowledgeGraph:
             # Relationships
             self.conn.execute("CREATE REL TABLE IF NOT EXISTS has_pseudo (FROM Material TO Pseudopotential)")
             self.conn.execute("CREATE REL TABLE IF NOT EXISTS part_of (FROM Material TO System)")
+            self.conn.execute("CREATE NODE TABLE IF NOT EXISTS PhysChemRule(id STRING, subject STRING, predicate STRING, object_val STRING, unit STRING, reason STRING, PRIMARY KEY(id))")
+            self.conn.execute("CREATE NODE TABLE IF NOT EXISTS StructureCard(path STRING, payload STRING, PRIMARY KEY(path))")
         except RuntimeError as e:
             # Table might already exist if we catch it, ignore
             if "already exists" not in str(e).lower():
@@ -67,6 +72,59 @@ class KnowledgeGraph:
             self.conn.execute("MERGE (s:System {name: $name}) SET s.type_map=$types, s.temp=$temp", {"name": name, "types": json.dumps(types), "temp": temp})
         for symbol, system in [("Ir", "IrO2_Water"), ("Ti", "Anatase_TiO2_Water"), ("C", "Interface")]:
             self.conn.execute("MATCH (m:Material {symbol: $symbol}), (s:System {name: $system}) MERGE (m)-[:part_of]->(s)", {"symbol": symbol, "system": system})
+
+    def load_physchem_triples(self, triples):
+        for row in triples:
+            subject, predicate, value = str(row['subject']), str(row['predicate']), str(row['object'])
+            key = hashlib.sha256(f'{subject}\0{predicate}'.encode()).hexdigest()
+            details = {k: v for k, v in row.items() if k not in {'subject', 'predicate', 'object', 'unit'}}
+            self.conn.execute(
+                'MERGE (r:PhysChemRule {id: $id}) SET r.subject=$subject, r.predicate=$predicate, r.object_val=$value, r.unit=$unit, r.reason=$reason',
+                {'id': key, 'subject': subject, 'predicate': predicate, 'value': value,
+                 'unit': str(row.get('unit', '')), 'reason': json.dumps(details, ensure_ascii=False)})
+
+    def load_structure_cards(self, cards):
+        for path, card in cards.items():
+            self.conn.execute('MERGE (c:StructureCard {path: $path}) SET c.payload=$payload',
+                              {'path': path, 'payload': json.dumps(card, ensure_ascii=False)})
+
+    def structure_metadata(self, query):
+        """Match explicit file names/paths, never transfer counts between materials."""
+        result = self.conn.execute('MATCH (c:StructureCard) RETURN c.path, c.payload') if self.conn else None
+        cards = {}
+        while result and result.has_next():
+            path, payload = result.get_next()
+            card = json.loads(payload)
+            names = [path, card.get('fallback_path', ''), path.rsplit('/', 1)[-1]]
+            if any(name and re.search(r'(?<![\w.-])' + re.escape(name) + r'(?![\w.-])', query, re.I) for name in names):
+                cards[path] = card
+        return cards
+
+    def query_physchem_rules(self, query):
+        q = query.lower().replace('_', ' ')
+        aliases = {'Anatase_TiO2': ('tio2', 'anatase', 'titanium'),
+                   'Rutile_IrO2': ('iro2', 'iridium'), 'Rocksalt_MgO': ('mgo', 'magnesium'),
+                   'Quartz_SiO2': ('sio2', 'quartz', 'silica')}
+        scientific = any(w in q for w in ('water', 'h2o', 'ase', 'neighbor', 'rdf', 'density', 'boundary', 'interface', 'hydroxyl', 'molecular dynamics')) or any(w in q for words in aliases.values() for w in words)
+        facts = []
+        result = self.conn.execute('MATCH (r:PhysChemRule) RETURN r.subject, r.predicate, r.object_val, r.unit, r.reason ORDER BY r.id') if self.conn else None
+        while result and result.has_next():
+            subject, predicate, value, unit, reason = result.get_next()
+            words = aliases.get(subject, (subject.lower(),))
+            match = any(re.search(r'(?<!\w)' + re.escape(w) + r'(?!\w)', q) for w in words)
+            if subject in {'H2O', 'ASE_neighbor_list_ijd'}:
+                match = scientific
+            if subject == 'H2O_Flexible_MD':
+                match = scientific and bool(re.search(r'\b(md|timestep|langevin|verlet)\b|molecular dynamics', q))
+            if match:
+                facts.append(f'- {subject}: {predicate} = {value} {unit}. Details: {reason}')
+        if scientific:
+            facts.append("- Partition water/hydroxyl oxygens with covalent O-H neighbors before selecting crystal layers. neighbor_list('ijd', atoms, cutoff=...) returns three 1D arrays (i, j, d), not a distance matrix; Atom/Atoms has no get_neighbors().")
+        if any(w in q for w in ('density', 'rho', 'g/cm')):
+            facts.append('- Density (g/cm^3): rho_ow = ((counts_ow / 6.02214076e23) * 18.01528) / (area_xy * dz * 1e-24); for H_w divide counts by 2. area_xy = norm(cross(cell[0], cell[1])).')
+        if any(w in q for w in ('rdf', 'radial distribution', 'coordination')):
+            facts.append('- RDF: normalize pair histograms by (N_A * N_B / V) * (4*pi/3) * (r_outer**3 - r_inner**3), exclude self pairs, and use periodic minimum-image distances within the valid box radius.')
+        return facts
 
     def graph_query(self, query: str) -> list[dict]:
         results = []

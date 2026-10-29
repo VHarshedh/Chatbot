@@ -9,7 +9,7 @@ from langchain_text_splitters import Language, MarkdownHeaderTextSplitter, Recur
 from backend.config import settings
 from backend.rag.embeddings import OllamaEmbeddings
 
-EXCLUDED_DIRS = {"venv", ".venv", "env", "tests", "__pycache__", ".pytest_cache", "chroma_db", "kuzu_db", ".git", "node_modules", ".ipynb_checkpoints"}
+EXCLUDED_DIRS = {"rag_dataset","venv", ".venv", "env", "tests", "__pycache__", ".pytest_cache", "chroma_db", "kuzu_db", ".git", "node_modules", ".ipynb_checkpoints"}
 
 
 def provenance(path):

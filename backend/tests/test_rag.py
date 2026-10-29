@@ -42,6 +42,8 @@ def test_knowledge_graph_query(mocker):
         pass # Handle messy mock iteration
 
 def test_hybrid_retriever(mocker):
+    mocker.patch("backend.rag.knowledge_graph.KnowledgeGraph.query_physchem_rules", return_value=[])
+    mocker.patch("backend.rag.knowledge_graph.KnowledgeGraph.structure_metadata", return_value={})
     mocker.patch("backend.rag.vectorstore.OllamaEmbeddings")
     mocker.patch("chromadb.PersistentClient")
     mocker.patch("kuzu.Database")
@@ -139,19 +141,23 @@ def test_knowledge_graph_singleton(mocker):
     assert kg1 is kg2
 
 
-def test_hybrid_retriever_is_mol_skips_vector_search(mocker):
+def test_hybrid_retriever_is_mol_keeps_vector_search(mocker):
+    mocker.patch("backend.rag.knowledge_graph.KnowledgeGraph.query_physchem_rules", return_value=["O-H cutoff = 1.25"])
+    mocker.patch("backend.rag.knowledge_graph.KnowledgeGraph.structure_metadata", return_value={})
     mocker.patch("backend.rag.vectorstore.OllamaEmbeddings")
     mocker.patch("chromadb.PersistentClient")
     mocker.patch("kuzu.Database")
     mocker.patch("kuzu.Connection")
 
-    mock_search = mocker.patch("backend.rag.vectorstore.VectorStore.semantic_search")
+    mock_search = mocker.patch("backend.rag.vectorstore.VectorStore.semantic_search", return_value=[{"content": "Recipe", "metadata": {}}])
     mocker.patch("backend.rag.knowledge_graph.KnowledgeGraph.graph_query", return_value=[])
 
     hr = HybridRetriever()
     mol_query = "Calculate interfacial density profile of water on Anatase_TiO2_Water_MolecularAdsorbedWater.extxyz"
     context = hr.retrieve(mol_query)
-    mock_search.assert_not_called()
+    mock_search.assert_called_once()
+    assert "Recipe" in context
+    assert "<physchem_invariants>" in context
     assert "Trajectory File Path" in context
 
 

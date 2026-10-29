@@ -54,3 +54,9 @@ out/
 tmp/
 scratch/
 .env
+*.zip
+rag_dataset/
+*.gguf
+*.safetensors
+*.jinja
+tokenizer.json

@@ -1,0 +1,169 @@
+{
+  "pass_at_1": 37.5,
+  "best_val_loss": 0.0050213839248398374,
+  "loss_history": [
+    {
+      "stage": "Pre-Training_Baseline",
+      "val_loss": 2.06083,
+      "elapsed_hr": 0.031
+    },
+    {
+      "stage": "Phase1A_PhysChem_Foundations_step52",
+      "val_loss": 1.99931,
+      "elapsed_hr": 0.53
+    },
+    {
+      "stage": "Phase1A_PhysChem_Foundations_epoch1",
+      "val_loss": 1.99931,
+      "elapsed_hr": 0.538
+    },
+    {
+      "stage": "Phase1A_PhysChem_Foundations_step104",
+      "val_loss": 2.77016,
+      "elapsed_hr": 1.031
+    },
+    {
+      "stage": "Phase1A_PhysChem_Foundations_epoch2",
+      "val_loss": 2.60581,
+      "elapsed_hr": 1.044
+    },
+    {
+      "stage": "Phase1B_Trajectory_Observables_step54",
+      "val_loss": 0.79118,
+      "elapsed_hr": 2.02
+    },
+    {
+      "stage": "Phase1B_Trajectory_Observables_epoch1",
+      "val_loss": 0.79118,
+      "elapsed_hr": 2.024
+    },
+    {
+      "stage": "Phase1B_Trajectory_Observables_step108",
+      "val_loss": 0.87177,
+      "elapsed_hr": 2.633
+    },
+    {
+      "stage": "Phase1B_Trajectory_Observables_epoch2",
+      "val_loss": 0.87177,
+      "elapsed_hr": 2.637
+    },
+    {
+      "stage": "Phase1C_Debugging_And_Ensemble_step26",
+      "val_loss": 0.616,
+      "elapsed_hr": 3.354
+    },
+    {
+      "stage": "Phase1C_Debugging_And_Ensemble_epoch1",
+      "val_loss": 0.616,
+      "elapsed_hr": 3.362
+    },
+    {
+      "stage": "Phase1C_Debugging_And_Ensemble_step52",
+      "val_loss": 0.91991,
+      "elapsed_hr": 3.687
+    },
+    {
+      "stage": "Phase1C_Debugging_And_Ensemble_epoch2",
+      "val_loss": 0.91991,
+      "elapsed_hr": 3.697
+    },
+    {
+      "stage": "Phase1C_Debugging_And_Ensemble_step78",
+      "val_loss": 1.28138,
+      "elapsed_hr": 4.02
+    },
+    {
+      "stage": "Phase1C_Debugging_And_Ensemble_epoch3",
+      "val_loss": 1.28138,
+      "elapsed_hr": 4.033
+    },
+    {
+      "stage": "Stage3A_OnPolicy_SelfCorrection_step25",
+      "val_loss": 1.13593,
+      "elapsed_hr": 6.75
+    },
+    {
+      "stage": "Stage3A_OnPolicy_SelfCorrection_epoch1",
+      "val_loss": 1.13593,
+      "elapsed_hr": 6.759
+    },
+    {
+      "stage": "Stage3A_OnPolicy_SelfCorrection_step50",
+      "val_loss": 0.93298,
+      "elapsed_hr": 7.035
+    },
+    {
+      "stage": "Stage3A_OnPolicy_SelfCorrection_epoch2",
+      "val_loss": 0.94048,
+      "elapsed_hr": 7.049
+    },
+    {
+      "stage": "Stage3B_Anchored_Preference",
+      "val_loss": 0.00502,
+      "elapsed_hr": 7.459
+    },
+    {
+      "stage": "LoRA_Checkpoint_Soup",
+      "val_loss": 0.0098,
+      "elapsed_hr": 7.463
+    }
+  ],
+  "tasks": [
+    {
+      "task": "Q1_Anatase_Enclosing_Boundary",
+      "passed": false,
+      "reward": 0.0,
+      "stdout_preview": "",
+      "error": "SyntaxError: invalid syntax (<unknown>, line 1)"
+    },
+    {
+      "task": "Q2_IrO2_TopBottom_Boundary",
+      "passed": true,
+      "reward": 100.0,
+      "stdout_preview": "Atom_ID  | Symbol |      X (\u00c5) |      Y (\u00c5) |      Z (\u00c5)\n--------------------------------------------------------------\n74       | O      |     9.6816 |     2.9099 |     5.9528\n62       | O      |     3.2663 |     9.2933 |     5.9533\n65       | O      |     6.5117 |     2.9142 |     5.9659\n54       ",
+      "error": ""
+    },
+    {
+      "task": "Q3_Water_Density_And_RDF",
+      "passed": false,
+      "reward": 0.0,
+      "stdout_preview": "",
+      "error": "SyntaxError: invalid syntax (<unknown>, line 1)"
+    },
+    {
+      "task": "Q4_Hydroxylation_Survival",
+      "passed": false,
+      "reward": 0.0,
+      "stdout_preview": "",
+      "error": "SyntaxError: invalid syntax (<unknown>, line 59)"
+    },
+    {
+      "task": "Q5_HBond_Network_Analysis",
+      "passed": true,
+      "reward": 100.0,
+      "stdout_preview": "Water Molecules (O_w): 56\nTotal Directed H-Bonds (R_OO <= 3.5 \u00c5, Angle >= 150.0 deg): 6\nMean H-Bonds (Donor + Acceptor) per Water Molecule: 0.214",
+      "error": ""
+    },
+    {
+      "task": "Q6_Einstein_MSD_Diffusion",
+      "passed": true,
+      "reward": 100.0,
+      "stdout_preview": "Frames: 6 | Water Oxygens Tracked: 56\nFinal MSD_3D: 0.0837 \u00c5^2 | Final Lateral MSD_xy: 0.0820 \u00c5^2\nEinstein Diffusion Coefficients: D_3D = 3.3076e-06 km^2 / 4.9195e-06 km^2",
+      "error": ""
+    },
+    {
+      "task": "Q7_Pt111_Langevin_MD",
+      "passed": false,
+      "reward": 40.0,
+      "stdout_preview": "",
+      "error": "Traceback (most recent call last):\n  File \"/kaggle/working/ase_exec_sandbox/tmprtpje_71.py\", line 22, in <module>\n    full_mask[:len(slab)] = mask[0, 0]\n                            ^^^^\nNameError: name 'mask' is not defined\n"
+    },
+    {
+      "task": "Q8_QE_Cutoff_And_EOS",
+      "passed": false,
+      "reward": 0.0,
+      "stdout_preview": "",
+      "error": "SyntaxError: invalid syntax (<unknown>, line 7)"
+    }
+  ]
+}

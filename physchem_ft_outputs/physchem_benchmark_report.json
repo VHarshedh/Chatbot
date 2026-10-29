@@ -1,0 +1,66 @@
+{
+  "pass_at_1": 0.0,
+  "best_val_loss": 0.001686975439143781,
+  "loss_history": [
+    {
+      "stage": "Pre-Training_Baseline",
+      "val_loss": 2.53162,
+      "elapsed_hr": 0.027
+    },
+    {
+      "stage": "Stage1_PhysChem_WorldModel",
+      "val_loss": 4.80349,
+      "elapsed_hr": 0.462
+    },
+    {
+      "stage": "Stage2_PhysicsWeighted_CoPT_Code",
+      "val_loss": 0.62411,
+      "elapsed_hr": 1.839
+    },
+    {
+      "stage": "Stage4A_OnPolicy_Physics_SelfCorrection",
+      "val_loss": 0.09779,
+      "elapsed_hr": 3.82
+    },
+    {
+      "stage": "Stage4B_Sequential_ORPO",
+      "val_loss": 0.00173,
+      "elapsed_hr": 4.149
+    },
+    {
+      "stage": "LoRA_Checkpoint_Soup",
+      "val_loss": 0.00169,
+      "elapsed_hr": 4.154
+    }
+  ],
+  "tasks": [
+    {
+      "task": "Q1_Anatase_Enclosing_Boundary",
+      "passed": false,
+      "reward": 0.0,
+      "stdout_preview": "",
+      "error": "SyntaxError: unterminated string literal (detected at line 16) (<unknown>, line 16)"
+    },
+    {
+      "task": "Q2_IrO2_Enclosing_Boundary",
+      "passed": false,
+      "reward": 0.0,
+      "stdout_preview": "",
+      "error": "SyntaxError: closing parenthesis ')' does not match opening parenthesis '[' (<unknown>, line 43)"
+    },
+    {
+      "task": "Q3_Water_Density_And_RDF",
+      "passed": false,
+      "reward": 0.0,
+      "stdout_preview": "",
+      "error": "SyntaxError: invalid decimal literal (<unknown>, line 28)"
+    },
+    {
+      "task": "Q4_Hydroxylation_Survival",
+      "passed": false,
+      "reward": 0.0,
+      "stdout_preview": "",
+      "error": "SyntaxError: closing parenthesis ']' does not match opening parenthesis '(' (<unknown>, line 22)"
+    }
+  ]
+}

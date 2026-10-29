@@ -1,0 +1,9 @@
+{
+  "coding_adapter": "C:\\Users\\harsh\\Chatbox_for_analysis_AI\\ChatBot\\scicompute_ft_data\\gemma_e2b_best_loss_adapter",
+  "physchem_adapter": "C:\\Users\\harsh\\Chatbox_for_analysis_AI\\ChatBot\\physchem_ft_outputs\\gemma_e2b_physchem_best_adapter",
+  "output_adapter": "C:\\Users\\harsh\\Chatbox_for_analysis_AI\\ChatBot\\merged_ft_adapter",
+  "alpha_coding": 0.35,
+  "alpha_physchem": 0.65,
+  "matched_lora_tensors": 410,
+  "total_tensors": 410
+}

@@ -55,6 +55,11 @@ def _index_evaluated_memory(session_id, prompt, response, evaluation):
 async def lifespan(app: FastAPI):
     init_db()
     try:
+        from backend.rag.ingest_dataset_zip import ingest_configured_dataset
+        await asyncio.to_thread(ingest_configured_dataset)
+    except Exception as exc:
+        print(f"Notice: Curated dataset sync failed: {exc}")
+    try:
         from backend.rag.chat_memory import get_chat_memory_store
         get_chat_memory_store().ingest_all_sessions()
     except Exception as e:
@@ -65,6 +70,13 @@ async def lifespan(app: FastAPI):
         "GPU — all layers (AMD Radeon via ROCm/HIP)" if settings.NUM_GPU == -1
         else f"GPU — {settings.NUM_GPU} layers"
     )
+    try:
+        from backend.merge_finetuned_models import register_unified_model_in_ollama, UNIFIED_MODEL_NAME
+        merge_res = register_unified_model_in_ollama(base_ollama_model=settings.MODEL_NAME)
+        if merge_res.get("status") == "success":
+            settings.MODEL_NAME = merge_res.get("active_model", UNIFIED_MODEL_NAME)
+    except Exception as e:
+        print(f"Notice: Fine-tuned adapter auto-merge skipped: {e}")
     print(f"Starting Scientific Computing API with active model: {settings.MODEL_NAME}")
     print(f"Inference device: {gpu_mode}")
     print(f"  To force CPU-only: set NUM_GPU=0 before starting (e.g. NUM_GPU=0 uvicorn ...)")
@@ -77,6 +89,11 @@ async def lifespan(app: FastAPI):
 async def startup_event():
     """Backward-compatible helper for tests invoking startup_event directly."""
     init_db()
+    try:
+        from backend.rag.ingest_dataset_zip import ingest_configured_dataset
+        await asyncio.to_thread(ingest_configured_dataset)
+    except Exception as exc:
+        print(f"Notice: Curated dataset sync failed: {exc}")
     try:
         from backend.rag.chat_memory import get_chat_memory_store
         get_chat_memory_store().ingest_all_sessions()

@@ -272,7 +272,7 @@ def format_anatase_extxyz_context_prompt() -> str:
     )
 
 
-def resolve_prompt_context(raw_text: str, notebook_path: Optional[str] = None) -> Dict[str, Any]:
+def _resolve_prompt_context(raw_text: str, notebook_path: Optional[str] = None) -> Dict[str, Any]:
     """
     Evaluates user prompt text against domain rules:
     - If prompt mentions 'anatase ti02 water molecular' -> provides ONLY the extxyz file location.
@@ -509,3 +509,17 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def resolve_prompt_context(raw_text: str, notebook_path: Optional[str] = None) -> Dict[str, Any]:
+    result = _resolve_prompt_context(raw_text, notebook_path)
+    try:
+        from backend.rag.knowledge_graph import KnowledgeGraph
+        import json
+        query = raw_text + " " + (result.get("data_file_path") or "")
+        cards = KnowledgeGraph.get_instance().structure_metadata(query)
+        if cards:
+            result["augmented_prompt"] = "<structure_metadata>\n" + json.dumps(cards, ensure_ascii=False) + "\n</structure_metadata>\n" + result["augmented_prompt"]
+    except Exception as exc:
+        print(f"Notice: Structure metadata lookup failed: {exc}")
+    return result

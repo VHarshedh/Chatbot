@@ -1,0 +1,651 @@
+{
+  "collection": "chatbox_docs_v2",
+  "dry_run": false,
+  "initial_chunks": 457,
+  "sources": [
+    {
+      "archive": "dataset.zip",
+      "source": "Analysis/README_Water_Interface_Analysis.md",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "Analysis/Water_Density_RDF_Survival_Probability_Hydroxyl_Fraction_with_IrO2_Template_Seperate_Plot_Capability.ipynb",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "Analysis/Water_Density_RDF_Survival_Probability_Hydroxyl_Fraction_with_IrO2_Template_Seperate_Plot_Capability_validated.py",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "Molecular Dynamics/Long_Run/DPMD_Interface/batch_1/in.lammps",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "Molecular Dynamics/Long_Run/DPMD_Interface/batch_1/lmp.sub",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "Molecular Dynamics/Long_Run/DPMD_Interface/batch_1/run_job.sh",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "Molecular Dynamics/Long_Run/DPMD_Interface/batch_2/in.lammps",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "Molecular Dynamics/Long_Run/DPMD_Interface/batch_2/lmp.sub",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "Molecular Dynamics/Long_Run/DPMD_Interface/batch_2/run_job.sh",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "Molecular Dynamics/Long_Run/DPMD_Interface/submit_from.sh",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "Molecular Dynamics/Long_Run/DPMD_Water/batch_1/in.lammps",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "Molecular Dynamics/Long_Run/DPMD_Water/batch_1/lmp.sub",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "Molecular Dynamics/Long_Run/DPMD_Water/batch_1/run_job.sh",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "Molecular Dynamics/Long_Run/DPMD_Water/batch_2/in.lammps",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "Molecular Dynamics/Long_Run/DPMD_Water/batch_2/lmp.sub",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "Molecular Dynamics/Long_Run/DPMD_Water/batch_2/run_job.sh",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "Molecular Dynamics/Long_Run/DPMD_Water/submit_from.sh",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "Molecular Dynamics/MD_Simulation_Script.ipynb",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "Molecular Dynamics/MD_Simulation_Script_validated.py",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "Molecular Dynamics/README_MD_Simulation_Script.md",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "Molecular Dynamics/ase_simulation_reference.md",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "Training/DP_Models/DPMD_Water/1/input.json",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "Training/DP_Models/DPMD_Water/1/train.sub",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "Training/DP_Models/DPMD_Water/2/input.json",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "Training/DP_Models/DPMD_Water/2/train.sub",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "Training/DP_Models/DPMD_Water/3/input.json",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "Training/DP_Models/DPMD_Water/3/train.sub",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "Training/README_Training_Script.md",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "Training/Raw_Files/DPMD_Water/Test/raw_to_set.sh",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "Training/Raw_Files/DPMD_Water/raw_to_set.sh",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "Training/Training_Script.ipynb",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "Training/Training_Script_validated.py",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "DFT/EnergyCutoffandKpointsScript.ipynb",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "DFT/EnergyCutoffandKpointsScript_validated.py",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "DFT/Pt.cif",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "DFT/README_EnergyCutoffAndKpoints.md",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "DFT/energycutoff/100/pw.in",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "DFT/energycutoff/100/qe.sub",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "DFT/energycutoff/submit.sh",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "docs/ase_molecular_simulations.md",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "sample_questions/sample_q1_boundary_enclosing_atoms.py",
+      "chunks": 7,
+      "status": "added"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "sample_questions/sample_q2_water_density_and_rdf.py",
+      "chunks": 7,
+      "status": "added"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "sample_questions/sample_q3_hydroxylation_survival_kinetics.py",
+      "chunks": 7,
+      "status": "added"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "sample_questions/sample_q4_ase_md_and_slab_relaxation.py",
+      "chunks": 3,
+      "status": "added"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "sample_questions/sample_q5_lammps_deepmd_dft_workflows.py",
+      "chunks": 10,
+      "status": "added"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "validation_report.json",
+      "chunks": 0,
+      "status": "excluded_non_reference"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "physchem_kb/chemical_bonding_and_cutoffs.md",
+      "chunks": 3,
+      "status": "added"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "physchem_kb/statistical_mechanics_and_md_laws.md",
+      "chunks": 2,
+      "status": "added"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "physchem_kb/physchem_knowledge_graph_triples.json",
+      "chunks": 11,
+      "status": "added"
+    },
+    {
+      "archive": "dataset.zip",
+      "source": "physchem_kb/structure_eda_cards.json",
+      "chunks": 1,
+      "status": "added"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "Analysis/README_Water_Interface_Analysis.md",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "Analysis/Water_Density_RDF_Survival_Probability_Hydroxyl_Fraction_with_IrO2_Template_Seperate_Plot_Capability.ipynb",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "Analysis/Water_Density_RDF_Survival_Probability_Hydroxyl_Fraction_with_IrO2_Template_Seperate_Plot_Capability_validated.py",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "Molecular Dynamics/Long_Run/DPMD_Interface/batch_1/in.lammps",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "Molecular Dynamics/Long_Run/DPMD_Interface/batch_1/lmp.sub",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "Molecular Dynamics/Long_Run/DPMD_Interface/batch_1/run_job.sh",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "Molecular Dynamics/Long_Run/DPMD_Interface/batch_2/in.lammps",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "Molecular Dynamics/Long_Run/DPMD_Interface/batch_2/lmp.sub",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "Molecular Dynamics/Long_Run/DPMD_Interface/batch_2/run_job.sh",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "Molecular Dynamics/Long_Run/DPMD_Interface/submit_from.sh",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "Molecular Dynamics/Long_Run/DPMD_Water/batch_1/in.lammps",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "Molecular Dynamics/Long_Run/DPMD_Water/batch_1/lmp.sub",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "Molecular Dynamics/Long_Run/DPMD_Water/batch_1/run_job.sh",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "Molecular Dynamics/Long_Run/DPMD_Water/batch_2/in.lammps",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "Molecular Dynamics/Long_Run/DPMD_Water/batch_2/lmp.sub",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "Molecular Dynamics/Long_Run/DPMD_Water/batch_2/run_job.sh",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "Molecular Dynamics/Long_Run/DPMD_Water/submit_from.sh",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "Molecular Dynamics/MD_Simulation_Script.ipynb",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "Molecular Dynamics/MD_Simulation_Script_validated.py",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "Molecular Dynamics/README_MD_Simulation_Script.md",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "Molecular Dynamics/ase_simulation_reference.md",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "Training/DP_Models/DPMD_Water/1/input.json",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "Training/DP_Models/DPMD_Water/1/train.sub",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "Training/DP_Models/DPMD_Water/2/input.json",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "Training/DP_Models/DPMD_Water/2/train.sub",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "Training/DP_Models/DPMD_Water/3/input.json",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "Training/DP_Models/DPMD_Water/3/train.sub",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "Training/README_Training_Script.md",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "Training/Raw_Files/DPMD_Water/Test/raw_to_set.sh",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "Training/Raw_Files/DPMD_Water/raw_to_set.sh",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "Training/Training_Script.ipynb",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "Training/Training_Script_validated.py",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "DFT/EnergyCutoffandKpointsScript.ipynb",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "DFT/EnergyCutoffandKpointsScript_validated.py",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "DFT/Pt.cif",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "DFT/README_EnergyCutoffAndKpoints.md",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "DFT/energycutoff/100/pw.in",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "DFT/energycutoff/100/qe.sub",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "DFT/energycutoff/submit.sh",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "docs/ase_molecular_simulations.md",
+      "chunks": 0,
+      "status": "existing_folder"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "sample_questions/sample_q1_boundary_enclosing_atoms.py",
+      "chunks": 0,
+      "status": "existing_source"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "sample_questions/sample_q2_water_density_and_rdf.py",
+      "chunks": 0,
+      "status": "existing_source"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "sample_questions/sample_q3_hydroxylation_survival_kinetics.py",
+      "chunks": 0,
+      "status": "existing_source"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "sample_questions/sample_q4_ase_md_and_slab_relaxation.py",
+      "chunks": 0,
+      "status": "existing_source"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "sample_questions/sample_q5_lammps_deepmd_dft_workflows.py",
+      "chunks": 0,
+      "status": "existing_source"
+    },
+    {
+      "archive": "curated_scientific_scripts_dataset.zip",
+      "source": "validation_report.json",
+      "chunks": 0,
+      "status": "excluded_non_reference"
+    },
+    {
+      "archive": "physics-chem-dataset.zip",
+      "source": "physchem_raw_dataset/atomic_structure_reference.csv",
+      "chunks": 32,
+      "status": "added"
+    },
+    {
+      "archive": "physics-chem-dataset.zip",
+      "source": "physchem_raw_dataset/bond_cutoff_knowledge_table.json",
+      "chunks": 10,
+      "status": "added"
+    },
+    {
+      "archive": "physics-chem-dataset.zip",
+      "source": "physchem_raw_dataset/eda_cleaning_report.json",
+      "chunks": 0,
+      "status": "excluded_non_reference"
+    },
+    {
+      "archive": "physics-chem-dataset.zip",
+      "source": "physchem_raw_dataset/physchem_eda_diagnostics.png",
+      "chunks": 0,
+      "status": "excluded_non_reference"
+    },
+    {
+      "archive": "physics-chem-dataset.zip",
+      "source": "physchem_raw_dataset/raw_physchem_corpus.jsonl",
+      "chunks": 75,
+      "status": "added"
+    },
+    {
+      "archive": "physics-chem-dataset.zip",
+      "source": "physchem_raw_dataset/structures/Anatase_TiO2_Water.extxyz",
+      "chunks": 1,
+      "status": "added"
+    },
+    {
+      "archive": "physics-chem-dataset.zip",
+      "source": "physchem_raw_dataset/structures/Ceria_CeO2_Water.extxyz",
+      "chunks": 1,
+      "status": "added"
+    },
+    {
+      "archive": "physics-chem-dataset.zip",
+      "source": "physchem_raw_dataset/structures/Quartz_SiO2_Water.extxyz",
+      "chunks": 1,
+      "status": "added"
+    },
+    {
+      "archive": "physics-chem-dataset.zip",
+      "source": "physchem_raw_dataset/structures/Rocksalt_MgO_Water.extxyz",
+      "chunks": 1,
+      "status": "added"
+    },
+    {
+      "archive": "physics-chem-dataset.zip",
+      "source": "physchem_raw_dataset/structures/Rutile_IrO2_Water.extxyz",
+      "chunks": 1,
+      "status": "added"
+    }
+  ],
+  "final_chunks": 630,
+  "added_chunks": 173,
+  "statuses": {
+    "existing_folder": 80,
+    "added": 17,
+    "excluded_non_reference": 4,
+    "existing_source": 5
+  }
+}

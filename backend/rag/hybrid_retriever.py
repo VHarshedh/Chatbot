@@ -95,17 +95,6 @@ class HybridRetriever:
                 "- Surface Layer Selection: Use tolerance window `tol = 0.8` Å (`pos[:, 2] <= z_min + tol` or `pos[:, 2] >= z_max - tol`), never float `==`.",
                 "- Coordination & Cutoffs: Use `from ase.neighborlist import neighbor_list, natural_cutoffs`."
             ])
-        elif any(w in q_lower for w in ["density", "rdf", "survival", "interfacial", "cus", "o_adb", "hydroxyl"]):
-            kg_facts.extend([
-                "- Surface Metal Identification (`M_sur`): `z >= max(m_z) - 1.5` Å.",
-                "- Bulk vs Water Oxygen Separation: Sort O atoms by z; lowest `s * len(m_z)` are `O_bulk` (`s=2` for IrO2/TiO2); remaining are `O_w`.",
-                "- CUS & Adsorbed Water (`M_cus`, `O_adb`): `atoms.get_distance(i, j, mic=True) <= 2.5` Å between `M_sur` and `O_w`.",
-                "- Surface Bridge Oxygen (`O_sur` / `O_br`): `o_z[s * len(m_z) - len(m_cus_index) : s * len(m_z)]`.",
-                "- Mass Density Formula (g/cm³): `((count / 6.023e23) * 18.01528) / (volume * 1e-24)` where `volume = cell[0][0] * cell[1][1] * bin_width`.",
-                "- Hydroxylation Classification: `neighbor_list('ijd', frame, {('O', 'H'): 1.2}, self_interaction=False)` -> 1 H neighbor = Dissociated (`OH`/`OD`), 2 H neighbors = Molecular (`H2O`/`D2O`).",
-                "- Continuous Survival Probability `P(t)`: `len(set.intersection(*oh_sets[j:j+tau+1])) / len(oh_sets[j])`, integrated via `np.trapezoid(surv * times, times) / np.trapezoid(surv, times)`."
-            ])
-
         if any(w in q_lower for w in ["ase", "neighbor_list", "atomic simulation environment", "trajectory", "atoms"]):
             kg_facts.extend([
                 "- ASE Single Frame vs Trajectory: `atoms = read(path, index=0); atoms.set_pbc(True)` returns `Atoms`; `traj = read(path, index=':')` returns `list[Atoms]` (must unpack before `.get_positions()`).",
@@ -116,27 +105,27 @@ class HybridRetriever:
                 "- Geometry Optimization: `BFGS(atoms, trajectory='opt.traj').run(fmax=0.02)`."
             ])
 
-        # 2. Filtered Vector Search (Skip redundant retrieval if molecular extxyz isolation rule applies)
-        selected_chunks: List[str] = []
-        if not is_mol:
-            domain_filter = self._detect_domain_filter(query)
-            vs_results = self.vector_store.semantic_search(query, n_results=max_chunks * 2, filter=domain_filter)
-            if not vs_results and domain_filter is not None:
-                vs_results = self.vector_store.semantic_search(query, n_results=max_chunks * 2)
-
-            seen_prefixes = set()
-            for res in vs_results:
-                content = res.get("content", "").strip()
-                # Skip comment-only overview cells when executable code cells exist
-                if "OVERVIEW:" in content and "import " not in content and len(selected_chunks) >= 1:
-                    continue
-                prefix_sig = content[:120]
-                if prefix_sig in seen_prefixes:
-                    continue
-                seen_prefixes.add(prefix_sig)
-                selected_chunks.append(self._compress_chunk(content))
-                if len(selected_chunks) >= max_chunks:
-                    break
+        # 2. Always retrieve code and laws, including molecular structure requests.
+        invariants = self.kg.query_physchem_rules(query)
+        scientific = is_mol or bool(invariants)
+        domain_filter = self._detect_domain_filter(query)
+        if scientific:
+            domains = ["PhysChem & ASE Laws", "Verified Code Recipes", "ASE Documentation"]
+            if domain_filter:
+                domains.append(domain_filter["domain"])
+            domain_filter = {"domain": {"$in": domains}}
+        vs_results = self.vector_store.semantic_search(query, n_results=max_chunks, filter=domain_filter) if max_chunks > 0 else []
+        if not vs_results and domain_filter is not None and max_chunks > 0:
+            vs_results = self.vector_store.semantic_search(query, n_results=max_chunks)
+        selected_chunks = []
+        seen = set()
+        for res in vs_results:
+            content = res.get("content", "").strip()
+            if content and content not in seen:
+                seen.add(content)
+                selected_chunks.append(self._compress_chunk(content, max_chars=2400))
+            if len(selected_chunks) >= max_chunks:
+                break
 
         # 3. Cross-Session Episodic Memory (Strict distance threshold)
         memory_block = ""
@@ -154,6 +143,12 @@ class HybridRetriever:
 
         # 4. Assemble Compact, High-Signal Context for Gemma 4 E2B
         sections = ["<retrieved_context>"]
+        if invariants:
+            sections.append("  <physchem_invariants>\n" + "\n".join(invariants) + "\n  </physchem_invariants>")
+        cards = self.kg.structure_metadata(query)
+        if cards:
+            import json
+            sections.append("  <structure_metadata>\n" + json.dumps(cards, ensure_ascii=False) + "\n  </structure_metadata>")
         if kg_facts:
             sections.append("  <domain_ground_truth>\n    " + "\n    ".join(kg_facts) + "\n  </domain_ground_truth>")
         if selected_chunks:
